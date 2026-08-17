@@ -52,9 +52,84 @@ function onFailure(error) {
 }
 
 function onMessageArrived(message) {
-    console.log("onMessageArrived: ");
-    console.log(message.payloadString);
+    //console.log("onMessageArrived: ");
+    //console.log(message.payloadString);
     result = JSON.parse(message.payloadString)
+      try {
+        var nowTs = Date.now() / 1000;
+
+        // Check the date
+        // "dateTime": 1578965850,
+        var lastTs = result["current.dateTime.raw"];
+        if (typeof lastTs !== 'number') {
+          // A record with no station timestamp is INVALID and is dropped
+          // whole, exactly as if the fetch had never landed: the page's
+          // clock, its rates and its every placement are anchored on this
+          // field, and a record that cannot say when it was written
+          // cannot serve any of them.  Nothing is stored -- not latest,
+          // not latestTs, not latestRecvTs -- so the feed simply goes on
+          // looking dead, which is what it is, and DEAD_FEED restores the
+          // dome's marks on its own schedule.  8.3.3 and earlier stamped
+          // these from the BROWSER's clock, which is the one clock this
+          // page may not read; the fields line the README prescribes
+          // always carries current.dateTime.raw, so a feed doing this is
+          // misconfigured and the badge says so.  (John, 2026-08-16.)
+          setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
+          console.log('loop record has no current.dateTime.raw; ignored');
+          return;
+        }
+        latest = result;
+        var prevTs = latestTs;
+        latestTs = lastTs;
+        // Stamped by the browser, for the one question that must not
+        // cross clocks: has the feed stopped arriving HERE?  latestTs is
+        // the station's own time and belongs to the backdrop-age
+        // judgement; comparing it against Date.now() would make an
+        // ordinary two-minute clock skew look exactly like a dead feed.
+        //
+        // Only when the packet is NEW, though.  The commonest way a feed
+        // dies is not a failed fetch: weewx-loopdata stops writing and
+        // the web server goes on serving the last file, so every poll is
+        // a 200 carrying the same stale json.  Stamping those would keep
+        // this clock fresh for ever while the station's clock -- and with
+        // it the backdrop-age judgement, which reads latestTs -- froze:
+        // both restore paths dead at once, and the plate left showing a
+        // current star field wearing hour-old bodies.  A repeat of the
+        // same packet is not news.
+        if (latestTs !== prevTs) {
+          latestRecvTs = nowTs;
+        }
+        // How old the data on show is -- two terms, each measured on ONE
+        // clock, never across the two.  How stale this record already was
+        // when the page first found it: its own station time against the
+        // page's generation instant, station against station.  Plus how
+        // long since a fresh record arrived HERE: browser against
+        // browser.  Through 8.3.3 this was Date.now() minus the packet's
+        // station time, which posted a skewed viewer's offset as a
+        // permanent "Ns ago" over a perfectly live feed.
+        //
+        // The first term is zero on any healthy feed, whose packets are
+        // newer than the page that reads them, and the six-second LIVE
+        // threshold absorbs a write that lags the archive instant.  It
+        // earns its place on the dead feed a viewer has just loaded:
+        // loopdata stopped an hour ago, the web server still serves the
+        // last file, and the first fetch stamps latestRecvTs -- so the
+        // second term alone reads zero and the badge would call hour-old
+        // data LIVE, resetting on every reload.  Against GEN_TS it reads
+        // the hour.
+        var age = Math.round(Math.max(0, GEN_TS - latestTs)
+                             + (nowTs - latestRecvTs));
+        setHtml("live-label", age <= 6 ? T['LIVE'] : fmt('{age}s ago', {age: age}));
+        // Display the time of the last update, in the page's timezone.
+        setHtml("last-update", fmtHMS(lastTs));
+        pushHistory(latestTs, result);
+        renderSatRosters();
+        renderGeo();
+        renderDome(nowTs);
+        renderPass();
+      } catch (e) {
+        console.log(e);
+      }
 
 }
 
