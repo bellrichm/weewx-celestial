@@ -264,9 +264,9 @@
     }
   }
   setPageExpirationTimer();
-  setInterval(updateCurrent, refresh_rate * 1000);
+  //setInterval(updateCurrent, refresh_rate * 1000);
   setInterval(localTick, 1000);
-  addLoadEvent(updateCurrent);
+  //addLoadEvent(updateCurrent);
 
   // ---- formatting helpers -------------------------------------------------
   function tzOptions(opts) {
