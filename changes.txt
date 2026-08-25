@@ -1,6 +1,100 @@
 weewx-celestial change history
 ------------------------------
 
+8.4 2026/08/24
+--------------
+- The installer works out where weewx-loopdata actually writes and
+  points the page at it.  The page fetches loop_data_file, a URL
+  relative to its OWN report's directory; weewx-loopdata writes
+  loop_data_dir, a path relative to its TARGET report's directory.  Two
+  different reports, so a shipped default can only be right for the
+  layout it was chosen for -- and a page that asks the wrong URL says
+  NO DATA (HTTP 404), which is the commonest trouble this extension
+  has.  weewx.conf holds both halves, so the installer derives the
+  value and writes it rather than shipping a guess.  The shipped
+  default moves to ../loopdata/loop-data.txt -- where a stock
+  weewx-loopdata writes -- for the station installed before
+  weewx-loopdata, which leaves nothing to derive from.  A
+  loop_data_file already in weewx.conf is never rewritten: it may be
+  answering a web-server alias no installer can see, so a disagreement
+  is reported and the change left to you.  Upgrading installs keep
+  whatever they have.  A loop-data file written outside your reports
+  tree (/dev/shm, or a directory of its own) is named as such and left
+  to you as well -- a path on disk does not give the URL that serves
+  it.
+- The manual says where the loop-data file should live, and points at
+  weewx-loopdata's manual for the how: the location is loopdata's
+  setting, not this skin's.  The default -- inside your reports tree,
+  where weewx-loopdata puts it -- works and is what most stations keep.
+  This page's own half is documented here: with the file outside the
+  reports tree, loop_data_file becomes the absolute URL your web server
+  alias serves, and it is the one setting the installer cannot derive.
+- The manual's countdown GIF is recaptured.  The old one was shot under
+  8.1, when the chips ticked once a second; since 8.3.5 they step with
+  each loop packet, so the caption had grown a paragraph of apology.
+  The new capture is 8.3.5's behaviour, rolling through a real sunset:
+  the chip counts to zero and turns into the next sunrise.
+- A station whose console clock runs fast is no longer accused of
+  writing no backdrops.  Its archive records are stamped ahead of its
+  own loop packets, so every backdrop it serves depicts a time the page
+  has not reached; the page refuses them -- it will not draw a sky from
+  the future -- and the star field freezes.  That much is right, but the
+  line under the panel read "no newer backdrop has arrived", which sent
+  the reader looking for a report cycle that was running perfectly the
+  whole time.  The line now names this case as its own, and the manual
+  has a section for it.
+- On an archive interval the fragment spacing does not divide -- 350
+  seconds, say, against 60-second slots -- the station rendered a sixth
+  backdrop every report cycle that no page could ever ask for, and the
+  last 50 seconds of each cycle showed the slot before.  The set now
+  counts what it writes.  Every standard WeeWX archive interval divides
+  exactly and is unaffected.
+- The Next Visible Pass chart stops rewriting its dot's hidden state
+  twice a second through the minutes after a pass ends (8.3.5 fixed the
+  same churn in the hours before one rises).
+- Drop-in over 8.3.5; no configuration change.
+
+8.3.5 (2026/08/17)
+------------------
+- The page's clock is the loop packet's own timestamp -- and, before the
+  first packet, the instant the page was generated for.  8.3.4 carried
+  the station's clock forward between packets on the browser's
+  stopwatch; nothing does now, so the time shown always belongs to the
+  data beside it.  A browser test proves a viewer clock half an hour
+  wrong, either way, changes nothing on the page.
+- The countdown chips and the satellite rosters repaint as loop packets
+  arrive (every refresh_rate seconds) rather than once a second; the
+  tick remains for the motion between packets.  A page with no working
+  loop feed stands still, and the LIVE badge says why.
+- The header's separate running clock is gone; the "updated" stamp
+  beside it is baked at generation in 24-hour HH:MM:SS.
+- The sky dome can no longer show a sky the station has not reached.
+  The page worked out which backdrop to ask for from the backdrop it
+  was holding, and for the first moments of every report cycle that one
+  belongs to the cycle before -- so it named that cycle's late slot, and
+  since a backdrop's filename carries a slot number and no cycle, the
+  station answered out of the cycle it now held: a sky up to a cycle
+  into the future, kept until the real time caught up to it.  The slot
+  now follows from the station's clock and the archive interval alone
+  (report cycles are generated for an archive record, so every cycle
+  begins on an interval boundary), and a backdrop depicting a time the
+  station has not reached is refused.  A laptop waking from sleep or a
+  tab returning from the background steps to the right backdrop as soon
+  as the loop feed catches up.
+- The backdrop is fetched only when the sky is due to step -- when the
+  slot the station's clock calls for is not the one already showing --
+  instead of once a minute regardless.  A page in step with its station
+  fetches nothing; a page whose station has stopped writing fetches
+  nothing either, since its clock has stopped with it.  On an archive
+  interval longer than ten minutes, where the slots are spaced further
+  apart than the old once-a-minute refetch, most of those fetches
+  returned a sky the page already had and were discarded.
+- The Next Visible Pass chart no longer rewrites its dot's position and
+  look once a second through the hours before a pass rises.  The chart
+  stands as the station drew it, and is now restored once rather than
+  continuously.
+- Drop-in over 8.3.4; no configuration change.
+
 8.3.4 (2026/08/16)
 ------------------
 - The live page now reads one clock, and it is the station's.  Every
