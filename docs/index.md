@@ -3,7 +3,7 @@ title: Home
 layout: default
 nav_order: 1
 permalink: /
-description: A live celestial page for WeeWX — countdown central, the Geocentric panel with comets, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart, on a dark or light plate — updating on every loop packet via weewx-loopdata almanac fields.
+description: A live celestial page for WeeWX — countdown central, the Geocentric panel with comets, the live sky dome with real-time satellite tracking, and the Next Visible Pass chart, on a dark or light plate — updating on every loop packet via weewx-loopdata almanac fields, and droppable into a skin of your own.
 ---
 
 # weewx-celestial — Watch the sky move
@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **8.4**, the current release.
+This manual documents weewx-celestial **9.0.1**, the current release.
 
 ## Start here
 
@@ -31,6 +31,8 @@ This manual documents weewx-celestial **8.4**, the current release.
 - **[Troubleshooting](troubleshooting.md)** — symptom first: the badge's
   error states, missing panels, missing chips, a page that will not go
   live.
+- **[Panels in your own skin](own-skin.md)** — new in 9.0: put these
+  panels in a skin of your own, live layer and all.
 
 ## What it is
 
@@ -189,17 +191,26 @@ What installs:
 
 - The `Celestial` skin (the sample report), registered as
   `CelestialReport`.
-- The `--migrate-loopdata-fields` command-line utility (see
-  [upgrading](upgrading.md#upgrading-from-5x-or-earlier)), and the
-  `--add-satellite`/`--remove-satellite` and
+- The `--add-satellite`/`--remove-satellite` and
   `--add-comet`/`--remove-comet` utilities that make (or unmake) every
   weewx.conf edit a satellite or comet takes in one command (see
   [Adding and removing satellites](satellites-and-comets.md#adding-and-removing-satellites)
   and [comets](satellites-and-comets.md#adding-and-removing-comets)).
+- The page's declaration of the loop-data fields it reads: the fixed
+  ones in the skin, the satellite and comet ones written by the
+  installer for your `[Skyfield]` sets (see the
+  [Fields reference](fields-reference.md)).
+- The `$celestial` search list and the fragment generator the page's
+  panels are drawn by — which, as of 9.0, any skin can use: the countdown
+  row, the Geocentric, the sky dome and the Next Visible Pass chart drop
+  into a page of your own, live layer and all.  A skin says which panels
+  it embeds in its own `skin.conf`, so installing it and restarting WeeWX
+  is the whole procedure.  See
+  [Panels in your own skin](own-skin.md).
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.3.2 everything, and less at each tier below it, down to
+weewx-skyfield 2.3.4 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -218,11 +229,12 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - Python 3.9 or later
 - WeeWX 5.2 or later
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
-  6.9 or later
+  7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
   strongly recommended (required for Proxima Centauri; 2.0 or later
   required for the sky dome's satellites and the Next Visible Pass
   chart; 2.1 or later for the comets, the meteor showers and the full
   countdown row; 2.3.2 or later for the pass chart's dot to leave the
-  chart when the pass ends; 1.15 or later for the light plate, which is
-  the paper its charts are drawn on), or PyEphem
+  chart when the pass ends; 2.3.4 or later for the panels beside the
+  dome to settle their state without drawing one; 1.15 or later for the
+  light plate, which is the paper its charts are drawn on), or PyEphem

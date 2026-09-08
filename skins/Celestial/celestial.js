@@ -1,206 +1,99 @@
-## Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
-## See LICENSE.txt for your rights
-## NOTE: Cheetah owns '#' and '$' in this file: no hex color literals (all
-## colors come from classes in celestial.css, the SVG marks through the
-## fill-*/stroke-* classes) and no javascript template literals.  Guard
-## every loop-data key: a missing field must skip its own cell, never
-## abort the whole update.  Non-ASCII glyphs in javascript strings use
-## \u escapes so the generator's html_entities encoding cannot touch them.
-#errorCatcher Echo
-#encoding UTF-8
-#import os
-## Auto-detect the station's IANA timezone at report-generation time (the
-## report is generated on the station machine): /etc/localtime is a symlink
-## into the zoneinfo tree on Debian-family systems; /etc/timezone is the
-## fallback.  Empty when neither yields a valid zone (the javascript then
-## falls back to the viewer's browser timezone).
-#set $auto_tz = ''
-#try
-#set $auto_tz = os.readlink('/etc/localtime').split('zoneinfo/')[-1]
-#except
-#pass
-#end try
-#if not $auto_tz
-#try
-#set $auto_tz = open('/etc/timezone').read().strip()
-#except
-#pass
-#end try
-#end if
-#if $auto_tz and not os.path.exists('/usr/share/zoneinfo/' + $auto_tz)
-#set $auto_tz = ''
-#end if
-<script>
-  #if $Extras.has_key('page_update_pwd')
-    page_update_pwd = '$Extras.page_update_pwd';
-  #else
-    page_update_pwd = 'foo';
-  #end if
-  #if $Extras.has_key('refresh_rate')
-    refresh_rate = $Extras.refresh_rate;
-  #else
-    refresh_rate = 2;
-  #end if
-  #if $Extras.has_key('expiration_time')
-    expiration_time = $Extras.expiration_time;
-  #else
-    expiration_time = 24;
-  #end if
-  ## Timezone for displayed times: the station's zone, auto-detected above.
-  ## The time_zone Extras option overrides ('browser' forces the viewer's
-  ## browser-local zone); empty falls back to browser-local too.
-  #if $Extras.has_key('time_zone')
-    time_zone = '$Extras.time_zone';
-  #else
-    time_zone = '$auto_tz';
-  #end if
-  if (time_zone === 'browser') {
-    time_zone = '';
-  }
-  // An unknown zone name must not break every render: probe once and fall
-  // back to the browser's local zone.
-  try {
-    new Date().toLocaleString("en-US", time_zone === '' ? {} : {timeZone: time_zone});
-  } catch (e) {
-    console.log('bad time_zone "' + time_zone + '", using browser-local');
-    time_zone = '';
-  }
-  ## Station latitude decides the moon disc's lit side (hemisphere flip).
-  STATION_LAT = $station.stn_info.latitude_f;
-  ## The instant this page was generated FOR, on the station's clock -- the
-  ## same stamp the dome fragment carries as data-dome-ts.  It is the
-  ## station clock's anchor before the first loop packet arrives; see
-  ## serverNow.
-  GEN_TS = $int($almanac.time_ts);
-  ## Distances arrive as raw AU (weewx-loopdata almanac fields); convert to
-  ## the report's distance units here.  windrun stands in for group_distance
-  ## (this extension registers no observation types).
-  #set $dist_label = str($unit.label.windrun)
-  #if $unit.unit_type.windrun == 'km'
-  #set $per_au = 1.4959787e8
-  #else
-  #set $per_au = 9.2955807e7
-  #end if
-  PER_AU = $per_au;
-  DIST_LABEL = '$dist_label';
-  // The report's language drives toLocaleString (the satellite rosters'
-  // pass times and the frozen-sky line's time; the header's "updated"
-  // stamp and the chip details are 24-hour in every language, matching
-  // the template's bake); an unknown tag must not break every render.
-  LOCALE = '$lang';
-  try {
-    new Date().toLocaleString(LOCALE);
-  } catch (e) {
-    console.log('bad lang "' + LOCALE + '", using en-US');
-    LOCALE = 'en-US';
-  }
-  ## Everything this script composes is translated at generation time and
-  ## fed here: body names from the report's [Almanac] section (the same
-  ## source as $almanac.<body>.label -- any almanac tier has .texts),
-  ## cardinals from the report formatter's compass ordinates, and the
-  ## badge/roster strings from [Texts] via $gettext (each key spelled out
-  ## literally so the tests can tie the include to lang/en.conf).  All
-  ## three ride through json.dumps, which \u-escapes every non-ASCII
-  ## character -- html_entities encoding can never touch them, and dial
-  ## labels land via textContent where entities would show literally.
-  ##
-  ## __dict__, never $almanac.texts: the attribute only exists from WeeWX
-  ## 5.3 and this extension supports 5.2, where the lookup does not fail
-  ## cleanly -- PyEphem's catch-all returns an AlmanacBinder for a body
-  ## named texts, so the access succeeds and .get kills the page.  See the
-  ## roster's fuller note in index.html.tmpl; on 5.2 the javascript gets
-  ## capitalized English names.
-  #import json
-  #set $almanac_texts = $almanac.__dict__.get('texts', {})
-  #set $names = {}
-  #for $b in ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto', 'earth')
-  #silent $names.update({$b: str($almanac_texts.get($b, $b.capitalize()))})
-  #end for
-  BODY_LABELS = $json.dumps($names);
-  #set $ords = $almanac.formatter.ordinate_names
-  CARDINALS = $json.dumps([str($ords[0]), str($ords[4]), str($ords[8]), str($ords[12])]);
-  #set $t = {}
-  #silent $t.update({'alt {alt}°': $gettext('alt {alt}°')})
-  #silent $t.update({'below horizon': $gettext('below horizon')})
-  #silent $t.update({'{dist} au': $gettext('{dist} au')})
-  #silent $t.update({'receding': $gettext('receding')})
-  #silent $t.update({'approaching': $gettext('approaching')})
-  #silent $t.update({'LIVE': $gettext('LIVE')})
-  #silent $t.update({'{age}s ago': $gettext('{age}s ago')})
-  #silent $t.update({'NO DATA (HTTP {status}) — check loop_data_file': $gettext('NO DATA (HTTP {status}) — check loop_data_file')})
-  #silent $t.update({'BAD DATA — check loop_data_file': $gettext('BAD DATA — check loop_data_file')})
-  #silent $t.update({'OFFLINE': $gettext('OFFLINE')})
-  #silent $t.update({'CLICK-ME': $gettext('CLICK-ME')})
-  #silent $t.update({'{ly} ly': $gettext('{ly} ly')})
-  #silent $t.update({'Proxima': $gettext('Proxima')})
-  ## The satellite rows' live strings -- countdown, pass description and
-  ## the honest empty states -- shared verbatim with weewx-skyfield's Sky
-  ## page (its translations are mined into this skin's lang files).
-  #silent $t.update({'overhead now': $gettext('overhead now')})
-  #silent $t.update({'in {m} min': $gettext('in {m} min')})
-  #silent $t.update({'in {h} h': $gettext('in {h} h')})
-  #silent $t.update({'in {n} day': $gettext('in {n} day')})
-  #silent $t.update({'in {n} days': $gettext('in {n} days')})
-  #silent $t.update({'just set': $gettext('just set')})
-  #silent $t.update({'appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min': $gettext('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min')})
-  #silent $t.update({'no visible pass in the coming week': $gettext('no visible pass in the coming week')})
-  #silent $t.update({'no pass in the coming week': $gettext('no pass in the coming week')})
-  #silent $t.update({'visible': $gettext('visible')})
-  #silent $t.update({'not visible': $gettext('not visible')})
-  #silent $t.update({'no usable orbital elements — see the weewxd log': $gettext('no usable orbital elements — see the weewxd log')})
-  ## The countdown chips' live strings.  The eclipse vocabulary and the
-  ## perihelion label are shared verbatim with weewx-skyfield's Sky page
-  ## (its translations are mined into this skin's lang files); sunset/
-  ## sunrise/darkness/supermoon/appears in and the day-count wrapper are
-  ## celestial's own wording.
-  #silent $t.update({'sunset': $gettext('sunset')})
-  #silent $t.update({'sunrise': $gettext('sunrise')})
-  #silent $t.update({'darkness begins': $gettext('darkness begins')})
-  #silent $t.update({'darkness ends': $gettext('darkness ends')})
-  #silent $t.update({'spring begins': $gettext('spring begins')})
-  #silent $t.update({'summer begins': $gettext('summer begins')})
-  #silent $t.update({'autumn begins': $gettext('autumn begins')})
-  #silent $t.update({'winter begins': $gettext('winter begins')})
-  #silent $t.update({'Earth perihelion': $gettext('Earth perihelion')})
-  #silent $t.update({'Earth aphelion': $gettext('Earth aphelion')})
-  #silent $t.update({'supermoon': $gettext('supermoon')})
-  #silent $t.update({'appears in': $gettext('appears in')})
-  #silent $t.update({'{d}d {h}h {m}m': $gettext('{d}d {h}h {m}m')})
-  #silent $t.update({'lunar eclipse': $gettext('lunar eclipse')})
-  #silent $t.update({'solar eclipse': $gettext('solar eclipse')})
-  #silent $t.update({'penumbral': $gettext('penumbral')})
-  #silent $t.update({'partial': $gettext('partial')})
-  #silent $t.update({'total': $gettext('total')})
-  #silent $t.update({'annular': $gettext('annular')})
-  #silent $t.update({'{name} perihelion': $gettext('{name} perihelion')})
-  ## The comet dial tooltip's magnitude suffix (celestial's own wording;
-  ## the rest of the tooltip reuses the roster keys above).
-  #silent $t.update({'mag {mag}': $gettext('mag {mag}')})
-  ## The dome's own health line: shown when the backdrop refetches stop
-  ## landing and the star field is no longer advancing.  The reason is
-  ## the last refetch's outcome, so the line names the fault rather than
-  ## just the symptom -- the same service the badge does for the loop
-  ## feed.  {file} is filled in with the fragment that actually failed
-  ## -- usually a numbered slot -- so the placeholder must survive
-  ## translation intact.
-  #silent $t.update({'Star field frozen — this sky is from {time} ({why})': $gettext('Star field frozen — this sky is from {time} ({why})')})
-  #silent $t.update({'no newer backdrop has arrived': $gettext('no newer backdrop has arrived')})
-  #silent $t.update({'{file} returns HTTP {status}': $gettext('{file} returns HTTP {status}')})
-  #silent $t.update({'{file} is not a sky fragment': $gettext('{file} is not a sky fragment')})
-  #silent $t.update({'{file} is empty': $gettext('{file} is empty')})
-  #silent $t.update({'no response for {file}': $gettext('no response for {file}')})
-  #silent $t.update({"{file} is stamped ahead of the station's clock": $gettext("{file} is stamped ahead of the station's clock")})
-  T = $json.dumps($t);
+/* Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
+   Distributed under the terms of the GNU Public License (GPLv3)
+   See LICENSE for your rights.
+
+   The Celestial page's live layer: the Geocentric dial and roster, the
+   countdown chips, the sky dome's backdrop walk and satellite marks, the
+   Next Visible Pass sweep, the LIVE badge -- everything the page does
+   after it is generated.  One static file, shipped by the CopyGenerator
+   like sky.js and version-tagged in the page's URL for it.
+
+   It publishes exactly ONE global, `celestial`, with ONE method,
+   `celestial.start(config)`.  The config is everything a report bakes --
+   its [Extras] options, the station's latitude, the generation instant,
+   the report's distance unit, language, body names, compass cardinals,
+   [Texts] strings, satellites, comets, name and loop-data file -- built by
+   user.celestial_page's config_script (the celestial tag) into the
+   <script> block that calls start().  Nothing else here is per-report;
+   through 8.5 all of it was one Cheetah include, `realtime_updater.inc`,
+   that baked those values into the script itself.
+
+   The page loads this file with a plain <script src>, NOT deferred, and
+   calls start() from the top of <body>: the loop poll is armed before the
+   panels below have parsed, so a first packet can land while the page is
+   still streaming in (see renderWanted and domeRefetchWanted, which
+   handle exactly that).
+
+   Every render function returns at once when its root element is absent
+   (#dial, #dome-svg, #pass-chart, the chips, the rosters), so a page
+   holding any subset of the panels runs this one script unchanged.
+
+   No color literal lives here: every color is a class in celestial.css
+   (the dial's marks through their per-body fill and stroke classes), and
+   the stylesheet's tokens are what a consumer restyles.  Nor may this
+   comment contain a star-slash, which would end it here.  ES5 throughout --
+   no arrow functions, no const, no classList -- and the reasons are given
+   where the code depends on it. */
+var celestial = (function () {
+  // The version this file was shipped with; start() logs a mismatch
+  // against the config's, which is the version of the Python that built
+  // it.  A test keeps this literal in lockstep with the other version
+  // sites.
+  var CELESTIAL_JS_VERSION = '9.0.1';
+
+  // ---- the report's configuration, set by start() -------------------------
+  // These were the values realtime_updater.inc baked; they keep their
+  // names so the code that reads them did not have to change.
+  var page_update_pwd, refresh_rate, expiration_time, time_zone;
+  var STATION_LAT;        // decides the moon disc's lit side (hemisphere flip)
+  var GEN_TS;             // the instant the page was generated FOR, on the
+                          // station's clock -- the same stamp the dome
+                          // fragment carries as data-dome-ts, and the
+                          // station clock's anchor before the first loop
+                          // packet arrives (see serverNow)
+  var PER_AU, DIST_LABEL; // distances arrive as raw au (weewx-loopdata
+                          // almanac fields) and convert to the report's
+                          // distance unit here
+  var LOCALE;
+  var BODY_LABELS;        // body names from the report's [Almanac] section
+  var CARDINALS;          // the report formatter's compass ordinates, N E S W
+  var T;                  // the [Texts] strings this script composes, keyed
+                          // by their English
+  var SAT_NAMES;          // the station's [Skyfield] [[Satellites]] tags
+  var COMET_NAMES;        // ... and its [[Comets]] tags
+  var REPORT_NAME;        // the report's own entry in loop_data_file
+  var LOOP_DATA_FILE;
+  var PAGE_THEME;         // the theme the page was generated on, 'dark' or
+                          // 'light' -- what a refetched fragment's own
+                          // report theme is compared with (pageThemeFlip)
+  // (The fragment files the dome and the pass chart refetch are named
+  // by the panels' own markup -- data-dome-prefix on #dome-svg,
+  // data-pass-fragment on #pass-chart -- from the fragment set each
+  // was rendered for, so a page embedding a set says its name once.)
   // Composed translations: look the English key up in T (falling back to
-  // the key, so a missing entry renders English) and fill the {named}
-  // placeholders.  Javascript key literals must spell non-ASCII with \u
-  // escapes to match json.dumps' escaping of the generated object.
+  // the key, so a missing or empty entry renders English) and fill the
+  // {named} placeholders -- every occurrence, the value inserted
+  // verbatim (split/join, not String.replace, whose replacement string
+  // would interpret a '$' in a name).  celestial_page.py's _t fills the
+  // first paint by the same rule, so the two paint the same bytes for
+  // the same translation, misspelled placeholders included.  Javascript
+  // key literals must spell non-ASCII with \u escapes to match
+  // json.dumps' escaping of the generated object.
   function fmt(key, params) {
     var s = T[key] || key;
     for (var k in params) {
-      s = s.replace('{' + k + '}', params[k]);
+      s = s.split('{' + k + '}').join(String(params[k]));
     }
     return s;
+  }
+  // Markup-escaped text for what the feed or the report controls and
+  // this script drops into innerHTML -- a satellite's, comet's or
+  // shower's label, a compass ordinal -- the same rule the panels'
+  // first paint applies (celestial_page's _esc).  [Texts] strings are
+  // never escaped: they carry markup of their own by design.
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function bodyLabel(key) {
     if (key === 'proxima_centauri') {
@@ -238,7 +131,15 @@
     pageTimedOut = true;
   }
   function setUpExpiredClickListener() {
+    // The badge is the page's chrome, not a panel, so a page in another
+    // skin need not carry it -- and this is the one site that reaches it
+    // directly rather than through the null-safe setHtml.  Unguarded, a
+    // page without it threw here on every poll once the expiration timer
+    // fired, for ever, and could never be clicked back to life.
     var liveLabel = document.getElementById("live-label");
+    if (liveLabel === null) {
+      return;
+    }
     if (liveLabel.innerHTML != T['CLICK-ME']) {
       liveLabel.innerHTML = T['CLICK-ME'];
       // set an onclick event on live-label to restart everything
@@ -256,6 +157,14 @@
     setPageExpirationTimer();
   }
   function setPageExpirationTimer() {
+    // 0 means NEVER expire, for a page whose host skin runs an expiry of
+    // its own: two regimes on one page is worse than either, and a
+    // consumer keeping its own badge has nowhere for CLICK-ME to appear
+    // anyway.  (Before 9.0 this armed setTimeout(..., 0) and expired the
+    // page instantly, so no station could have been relying on that.)
+    if (expiration_time <= 0) {
+      return;
+    }
     if (getUrlParam('pageUpdate') !== page_update_pwd) {
       // Expire in N hours, clamped to the browser's int32 timer-delay
       // ceiling (~24.8 days): past 2147483647 ms the delay overflows
@@ -266,13 +175,10 @@
                  Math.min(1000 * 60 * 60 * expiration_time, 2147483647));
     }
   }
-  setPageExpirationTimer();
-  setInterval(updateCurrent, refresh_rate * 1000);
-  setInterval(localTick, 1000);
-  addLoadEvent(updateCurrent);
-  // The interval above is armed NOW, at script eval, near the top of
-  // <body>, so a first packet can land while the rest of the page is
-  // still streaming in.  The renders that packet triggers (updateCurrent)
+  // The poll interval is armed by start(), which the page's config block
+  // calls at the top of <body>, so a first packet can land while the
+  // rest of the page is still streaming in.  The renders that packet
+  // triggers (updateCurrent)
   // are harmless on ids the parser has not reached -- setHtml is silent
   // -- but two of them, the countdown chips and the satellite rosters,
   // paint only on a NEW packet, never on the tick; on a dead feed that
@@ -298,7 +204,10 @@
     renderDome(nowTs);
     renderPass();
   }
-  addLoadEvent(function() {
+  function renderOnLoad() {
+    // Registered by start() after updateCurrent, so on a page whose
+    // first packet came before load the handler chain renders it once
+    // against the whole document.
     if (renderWanted && latest !== null) {
       renderWanted = false;
       try {
@@ -312,7 +221,7 @@
         console.log(e);
       }
     }
-  });
+  }
 
   // ---- formatting helpers -------------------------------------------------
   function tzOptions(opts) {
@@ -388,7 +297,7 @@
   // rate, which the manual tells users to match to weewx-loopdata's
   // write cadence, so twenty missed writes is the measure.  No
   // inference, no learning: a number from the configuration.
-  var DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
+  var DEAD_FEED;                       // set by start(), from refresh_rate
   // There is deliberately NO threshold here for how old the page's clock
   // may be before the backdrop refetch stops trusting it to name a slot.
   // It is the obvious instrument and it is the wrong one, twice over: any
@@ -451,17 +360,17 @@
     // (mockups/celestial-dial-contrast).
     for (var lg = -2; lg <= 5; lg++) {
       var rr = R_IN + (lg - LOG_MIN) / (LOG_MAX - LOG_MIN) * (R_OUT - R_IN);
-      svgEl('circle', {cx: CX, cy: CY, r: rr, 'class': 'geo-ring', fill: 'none',
+      svgEl('circle', {cx: CX, cy: CY, r: rr, 'class': 'cel-geo-ring', fill: 'none',
                        'stroke-opacity': lg <= 1 ? 0.5 : 0.4}, dial);
       var rp = dialXY(157.5, rr);
       svgEl('text', {x: rp[0], y: rp[1] - 3, 'class': 'gridlab',
                      'text-anchor': 'middle'}, dial, ringLabels[lg + 2]);
     }
-    svgEl('circle', {cx: CX, cy: CY, r: 296, 'class': 'geo-rim', fill: 'none'}, dial);
+    svgEl('circle', {cx: CX, cy: CY, r: 296, 'class': 'cel-geo-rim', fill: 'none'}, dial);
     for (var d = 0; d < 360; d += 45) {
       var p1 = dialXY(d, 290), p2 = dialXY(d, 296);
       svgEl('line', {x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1],
-                     'class': d % 90 === 0 ? 'geo-tick geo-tick-major' : 'geo-tick'}, dial);
+                     'class': d % 90 === 0 ? 'cel-geo-tick cel-geo-tick-major' : 'cel-geo-tick'}, dial);
     }
     var cardinals = [[0, CARDINALS[0]], [90, CARDINALS[1]],
                      [180, CARDINALS[2]], [270, CARDINALS[3]]];
@@ -470,15 +379,15 @@
       svgEl('text', {x: pc[0], y: pc[1] + 4.5, 'class': 'cardinal',
                      'text-anchor': 'middle'}, dial, cardinals[c][1]);
     }
-    svgEl('circle', {cx: CX, cy: CY, r: 9, 'class': 'fill-earth geo-earth'}, dial);
-    svgEl('text', {x: CX, y: CY + 24, 'class': 'earthlab'}, dial,
+    svgEl('circle', {cx: CX, cy: CY, r: 9, 'class': 'cel-fill-earth cel-geo-earth'}, dial);
+    svgEl('text', {x: CX, y: CY + 24, 'class': 'cel-earthlab'}, dial,
           BODY_LABELS['earth'] || 'Earth');
     var trailsG = svgEl('g', {}, dial);
     var marks = {};
     GEO_BODIES.forEach(function(key) {
       var segs = [];
       for (var i = 0; i < TRAIL_N; i++) {
-        segs.push(svgEl('line', {'class': 'trail stroke-' + key,
+        segs.push(svgEl('line', {'class': 'cel-trail cel-stroke-' + key,
                                  display: 'none'}, trailsG));
       }
       var g = svgEl('g', {display: 'none'}, dial);
@@ -488,16 +397,16 @@
       // <title> child; renderGeo keeps the text live.
       m.title = svgEl('title', {}, g, m.label);
       if (key === 'sun') {
-        m.glow = svgEl('circle', {r: 13, 'class': 'sunglow fill-sun'}, g);
-        m.dot = svgEl('circle', {r: 8, 'class': 'geodot fill-sun'}, g);
+        m.glow = svgEl('circle', {r: 13, 'class': 'cel-sunglow cel-fill-sun'}, g);
+        m.dot = svgEl('circle', {r: 8, 'class': 'cel-geodot cel-fill-sun'}, g);
       } else if (key === 'moon') {
         // True-phase disc: dark disc, lit limb/terminator path, silver rim
         // (the rim keeps a new moon visible against the card).
-        m.dot = svgEl('circle', {r: 8, 'class': 'moon-dark'}, g);
-        m.lit = svgEl('path', {'class': 'moon-lit'}, g);
-        m.rim = svgEl('circle', {r: 8, 'class': 'moon-rim', fill: 'none'}, g);
+        m.dot = svgEl('circle', {r: 8, 'class': 'cel-moon-dark'}, g);
+        m.lit = svgEl('path', {'class': 'cel-moon-lit'}, g);
+        m.rim = svgEl('circle', {r: 8, 'class': 'cel-moon-rim', fill: 'none'}, g);
       } else {
-        m.dot = svgEl('circle', {r: 6.5, 'class': 'geodot fill-' + key}, g);
+        m.dot = svgEl('circle', {r: 6.5, 'class': 'cel-geodot cel-fill-' + key}, g);
       }
       m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
       marks[key] = m;
@@ -512,10 +421,10 @@
     COMET_NAMES.forEach(function(key) {
       var segs = [];
       for (var i = 0; i < TRAIL_N; i++) {
-        segs.push(svgEl('line', {'class': 'trail stroke-comet',
+        segs.push(svgEl('line', {'class': 'cel-trail cel-stroke-comet',
                                  display: 'none'}, trailsG));
       }
-      var g = svgEl('g', {'class': 'geocomet', display: 'none'}, dial);
+      var g = svgEl('g', {'class': 'cel-geocomet', display: 'none'}, dial);
       var m = {label: satLabel(key), g: g, segs: segs,
                glow: null, dot: null, lit: null, rim: null, rays: []};
       m.title = svgEl('title', {}, g, m.label);
@@ -526,7 +435,7 @@
                                    'stroke-opacity': rayOpacity[ri],
                                    display: 'none'}, g));
       }
-      m.dot = svgEl('path', {'class': 'cometdot'}, g);
+      m.dot = svgEl('path', {'class': 'cel-cometdot'}, g);
       m.lab = svgEl('text', {'class': 'bodylab'}, dial, m.label);
       marks[key] = m;
     });
@@ -599,13 +508,17 @@
   }
 
   // ---- loop-data history and derived motion -------------------------------
-  // This script runs at global (window) scope, so its top-level names must
-  // never collide with window's built-ins: `history` in particular is the
-  // browser's read-only History object -- a `var history` here silently
-  // fails to bind and every use of it throws or reads navigation state.
+  // Through 8.5 this script ran at window scope, where a `var history`
+  // silently failed to bind (the browser's read-only History object) and
+  // every use of it threw or read navigation state; the function scope
+  // this file now lives in closes that class of bug, and the ring keeps
+  // the name it was given to survive it.
   var latest = null;      // last parsed loop-data object
   var latestTs = 0;       // its current.dateTime.raw; never the browser's time
   var latestRecvTs = 0;   // when THIS BROWSER received it (its own clock)
+  var latestRecvMono = 0; // and the same instant by the browser's monotonic
+                          // stopwatch (performance.now, milliseconds), which
+                          // the badge's age reads: see updateCurrent
   var packets = [];       // [{t, r}] oldest first, pruned to 10 minutes
   var HISTORY_SEC = 600;
   function pushHistory(t, r) {
@@ -675,7 +588,7 @@
   function setRowBelow(key, below) {
     var row = document.getElementById('geo-row-' + key);
     if (row) {
-      row.className = below ? 'row below' : 'row';
+      row.className = below ? 'cel-row cel-below' : 'cel-row';
     }
   }
   function renderGeo() {
@@ -695,8 +608,10 @@
     // The moon's phase, for its dial disc: percent full plus waxing
     // (the next full moon precedes the next new moon).
     var moonFrac = num(latest, 'almanac.moon.phase');
-    // Pinned spellings since 7.6; the pre-7.6 unpinned keys remain as
-    // fallbacks so a fields line migrated earlier keeps working unchanged.
+    // Pinned spellings since 7.6, which the skin's own declaration
+    // uses; the bare .raw keys stay as fallbacks for a `moon` group of
+    // your own in the report's stanza that overrides the skin's with
+    // the unpinned spellings.
     var nextFull = num(latest, 'almanac.next_full_moon.unix_epoch.raw');
     if (nextFull === null) {
       nextFull = num(latest, 'almanac.next_full_moon.raw');
@@ -767,9 +682,9 @@
         }
         m.rim.setAttribute('cx', p[0]);
         m.rim.setAttribute('cy', p[1]);
-        m.g.setAttribute('class', below ? 'geomoon below' : 'geomoon');
+        m.g.setAttribute('class', below ? 'cel-geomoon cel-below' : 'cel-geomoon');
       } else {
-        var cls = 'geodot fill-' + key + (below ? ' below stroke-' + key : ' ring');
+        var cls = 'cel-geodot cel-fill-' + key + (below ? ' cel-below cel-stroke-' + key : ' cel-ring');
         m.dot.setAttribute('class', cls);
       }
       if (m.glow !== null) {
@@ -777,7 +692,7 @@
         m.glow.setAttribute('cy', p[1]);
         m.glow.setAttribute('display', below ? 'none' : '');
       }
-      m.lab.setAttribute('class', below ? 'bodylab dim' : 'bodylab');
+      m.lab.setAttribute('class', below ? 'bodylab cel-dim' : 'bodylab');
       m.title.textContent = m.label + ' \u00B7 ' +
           (below ? T['below horizon']
                  : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)})) +
@@ -857,9 +772,9 @@
           ' L ' + (p[0] - 5).toFixed(1) + ',' + p[1].toFixed(1) + ' Z');
       var mag = num(latest, 'almanac.' + key + '.mag');
       var bright = (mag !== null && mag <= 6.0);
-      m.g.setAttribute('class', below ? 'geocomet below' : 'geocomet');
+      m.g.setAttribute('class', below ? 'cel-geocomet cel-below' : 'cel-geocomet');
       m.dot.setAttribute('class',
-          'cometdot' + (bright ? '' : ' faint') + (below ? ' below' : ''));
+          'cel-cometdot' + (bright ? '' : ' cel-faint') + (below ? ' cel-below' : ''));
       // The tail: three rays fanning ANTI-SUNWARD -- away from the sun's
       // own dial point (the sun sits on this plan view like any body;
       // radially-outward is sun-centered orrery logic and wrong here).
@@ -889,7 +804,7 @@
         ray.setAttribute('x2', (p[0] + (6.0 + rayGeom[ri][1]) * rx).toFixed(1));
         ray.setAttribute('y2', (p[1] + (6.0 + rayGeom[ri][1]) * ry).toFixed(1));
       }
-      m.lab.setAttribute('class', below ? 'bodylab dim' : 'bodylab');
+      m.lab.setAttribute('class', below ? 'bodylab cel-dim' : 'bodylab');
       var tip = m.label + ' \u00B7 ' +
           (below ? T['below horizon']
                  : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)})) +
@@ -937,39 +852,6 @@
   var CHART_REFRESH = 300;     // seconds between pass-chart refetches
   var DOME_BODIES = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
                      'saturn', 'uranus', 'neptune'];
-  ## The satellite set follows the station's [Skyfield] [[Satellites]],
-  ## enumerated through skyfield 2.0's public satellite_names() (guarded:
-  ## an older skyfield has no method and no satellites).  The template
-  ## builds the roster rows from the same list, so rows and live layer
-  ## always agree; the loopdata fields line stays per-satellite manual
-  ## (the README shows the pattern).
-  #set $sat_names = []
-  #if $sky_page
-  #try
-  #for $n in $sky_page.satellite_names()
-  #silent $sat_names.append(str($n))
-  #end for
-  #except
-  #pass
-  #end try
-  #end if
-  SAT_NAMES = $json.dumps($sat_names);
-  ## The comet set follows [Skyfield] [[Comets]] the same way, through
-  ## skyfield 2.1's public comet_names() (guarded: an older skyfield has
-  ## no method and no comets).  Comets ride the DIAL, not the dome: the
-  ## embedded dome fragments already carry their diamonds, redrawn every
-  ## backdrop refetch -- nothing to nudge at comet speed.
-  #set $comet_names = []
-  #if $sky_page
-  #try
-  #for $n in $sky_page.comet_names()
-  #silent $comet_names.append(str($n))
-  #end for
-  #except
-  #pass
-  #end try
-  #end if
-  COMET_NAMES = $json.dumps($comet_names);
   // dome_svg's fixed geometry (viewBox 0 0 680 706): sky-chart
   // orientation, north up, EAST LEFT -- hence minus sine.  Mirrors
   // wxskyfield_sky._dome_xy; deliberately opposite the dial's east-right.
@@ -1066,11 +948,18 @@
       return;
     }
     if (latestRecvTs > 0 && nowTs - latestRecvTs > DEAD_FEED) {
-      // Both sides of this comparison are the BROWSER's clock -- the
-      // receipt stamp, not the packet's station timestamp.  Mixing them
-      // reintroduced exactly what 8.3.1 removed: a viewer two minutes
-      // ahead of the station would read every healthy packet as a dead
-      // feed, for ever, with no line under the panel to say why.
+      // Both sides of this comparison are the browser's WALL clock --
+      // the receipt stamp, not the packet's station timestamp.  Mixing
+      // them reintroduced exactly what 8.3.1 removed: a viewer two
+      // minutes ahead of the station would read every healthy packet as
+      // a dead feed, for ever, with no line under the panel to say why.
+      //
+      // The wall clock and not the monotonic one, for packetAge's
+      // reason: this asks whether the world has moved on since the last
+      // packet, so time the machine spent SUSPENDED must count.  A
+      // monotonic clock stops during sleep, and a laptop reopened onto
+      // a feed that died while it slept would not call the sky dead
+      // until it had been awake DEAD_FEED seconds.
       //
       // The other input dying is the same lie inverted, and the comment
       // in domeStaleFor used to get this wrong.  When the FEED stops,
@@ -1124,8 +1013,9 @@
   // The live satellite layer: our own marker (dot + name), created
   // inside the current backdrop and rebuilt after every swap.  Feature
   // detection is key PRESENCE: a loop feed without the
-  // satellite keys (older skyfield, no [[Satellites]], unmigrated fields
-  // line) leaves the static dome untouched; keys present but null mean
+  // satellite keys (older skyfield, no [[Satellites]], a station not
+  // re-installed since its satellites changed) leaves the static dome
+  // untouched; keys present but null mean
   // unusable elements -- configured, but nothing to draw.
   var satMarks = null;
   // NOTE (2026-08-06, tried and rejected -- do not re-add without a
@@ -1144,7 +1034,7 @@
   function buildSatMark(svg) {
     var g = svgEl('g', {display: 'none'}, svg);
     return {g: g,
-            dot: svgEl('circle', {r: 4, 'class': 'satdot'}, g),
+            dot: svgEl('circle', {r: 4, 'class': 'cel-satdot'}, g),
             lab: svgEl('text', {'class': 'satlab'}, g)};
   }
   function localDayNum(ts) {
@@ -1205,7 +1095,7 @@
     // elements, the weewxd-log row without.  setHtml is a no-op when
     // the report almanac never served the row.
     if (!hasKey(base + '.rise.unix_epoch.raw') && !hasKey(base + '.rise.raw')) {
-      // Not in the fields line at all: the report-time first paint
+      // Not declared at all: the report-time first paint
       // stands.  A key PRESENT with a null value is different -- that
       // is loopdata's honest "no pass", handled below.
       return;
@@ -1233,8 +1123,8 @@
       return;
     }
     var sub = fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} min',
-                  {rise: riseOrd, alt: maxAlt.toFixed(0), culm: culmOrd,
-                   set: setOrd, m: Math.round(dur / 60).toString()});
+                  {rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),
+                   set: esc(setOrd), m: Math.round(dur / 60).toString()});
     if (tagVisibility) {
       var vis = latest[base + '.visible'];
       if (vis === true) {
@@ -1396,10 +1286,10 @@
       // in 8.3.2 and this one has to stay here, where it is used.
       var shadowed = (latest['almanac.' + name + '.sunlit'] === false);
       var daylight = (sunAlt !== null && sunAlt >= -6);
-      m.dot.setAttribute('class', 'satdot' + (shadowed ? ' shadow' : '')
-                                           + (daylight ? ' faint' : ''));
+      m.dot.setAttribute('class', 'cel-satdot' + (shadowed ? ' cel-shadow' : '')
+                                           + (daylight ? ' cel-faint' : ''));
       m.lab.setAttribute('class',
-                         (shadowed || daylight) ? 'satlab faint' : 'satlab');
+                         (shadowed || daylight) ? 'satlab cel-faint' : 'satlab');
       m.lab.textContent = satLabel(name);
       m.lab.setAttribute('x', (p[0] + 8).toFixed(1));
       m.lab.setAttribute('y', (p[1] - 6).toFixed(1));
@@ -1538,8 +1428,49 @@
     // the ceiling in the response handler.
     return {k: k, ts: base + k * m.step};
   }
+  // Where the fragments are: the generator writes a set into its
+  // directory under the report's HTML_ROOT, and the config block
+  // carries this page's route up to HTML_ROOT (root: '../' per
+  // directory level, from core's filename tag, which the page passes to
+  // config_script) -- so a page may sit anywhere under HTML_ROOT and
+  // the skin may keep its assets anywhere; nothing here is inferred.
+  // The panel's markup carries the set's directory (data-dome-dir,
+  // data-pass-dir).  A page that passed no filename has root '' and
+  // fetches relative to itself, right when it sits beside its set.
+  var FRAGMENT_ROOT = '';
+  function fragmentUrl(dir, name) {
+    return FRAGMENT_ROOT + (dir ? dir + '/' : '') + name;
+  }
+  // A fragment fetch that came back wrong -- an HTTP error, or a body
+  // that is not a fragment (a server's fallback page for an unknown
+  // path) -- earns one console line per kind naming the URL asked, so
+  // a set written where the page is not looking is a line in the
+  // console, not a sky that quietly stops moving.
+  var fragWarned = {};
+  function warnFragmentOnce(kind, url, why) {
+    if (fragWarned[kind]) {
+      return;
+    }
+    fragWarned[kind] = true;
+    console.warn('celestial: the ' + kind + ' fragment ' + url + ' ' + why);
+  }
+  var domePrefixWarned = false;
   function domeFragName(k) {
-    return k >= 1 ? 'dome-svg-' + k + '.txt' : 'dome-svg.txt';
+    // The set's files, named by the swap target the panel rendered
+    // (data-dome-prefix).  No attribute, no name: the panel is
+    // contracted to emit it, and a default here would refetch one
+    // set's files under another set's first paint -- the fault the
+    // attribute exists to end.  null means fetch nothing.
+    var wrap = document.getElementById('dome-svg');
+    var prefix = wrap === null ? null : wrap.getAttribute('data-dome-prefix');
+    if (prefix === null || prefix === '') {
+      if (wrap !== null && !domePrefixWarned) {
+        domePrefixWarned = true;   // once, not once a minute
+        console.warn('celestial: #dome-svg carries no data-dome-prefix; the dome is not refetched');
+      }
+      return null;
+    }
+    return k >= 1 ? prefix + '-' + k + '.txt' : prefix + '.txt';
   }
   function hideSkytip() {
     // sky.js's tap chip does not follow its mark, so a fragment swap
@@ -1560,13 +1491,36 @@
   var domeRestored = false;      // has the freeze already undone the nudges
   var domeChecked = false;       // has any refetch attempt completed yet
   var domeFetchInFlight = false; // is one out on the wire right now
-  // The plate this page was generated on -- the class the stylesheet's
-  // light rules hang off.  ('theme-light' or 'theme-dark'; anything else
-  // reads as night, the shipped default.)  Compared against each
-  // refetched backdrop's own; see refreshDome.
-  var PAGE_PALETTE =
-      document.documentElement.className.indexOf('theme-light') >= 0
-          ? 'light' : 'night';
+  // The theme this page was generated on (PAGE_THEME, from the config
+  // block -- the report's own resolution, so the page's markup owes the
+  // script nothing) compared with the report's theme each refetched
+  // fragment carries (data-page-theme, on the dome's wrapper and the
+  // pass chart's alike): on theme = auto the report cycle that crosses
+  // sunrise regenerates the page on the other plate, and the open page
+  // must follow it -- a paper page under night chrome, or the reverse
+  // at sunset, would otherwise stand until somebody reloaded, which on
+  // a dashboard left open is never.  So the page reloads itself, ONCE
+  // per plate per fragment kind: the report has already regenerated,
+  // and this is the report-cycle flip the manual promises.  Once only
+  // -- if a cached page keeps disagreeing, one stale plate beats a
+  // reload loop.  The fragment SET's own plate (data-dome-palette /
+  // data-pass-palette) takes no part: a set on a plate other than the
+  // page's is styled by its own attribute and is never a flip.  A
+  // fragment without data-page-theme (a hand-made one) is simply
+  // applied.
+  function pageThemeFlip(text, kind) {
+    var tm = /data-page-theme="([a-z]+)"/.exec(text);
+    if (tm !== null && tm[1] !== PAGE_THEME) {
+      if (!plateReloadTried(kind, tm[1])) {
+        markPlateReload(kind, tm[1]);
+        window.location.reload();
+        return true;
+      }
+    } else if (tm !== null) {
+      clearPlateReload(kind);  // in step -- so the next flip gets its own reload
+    }
+    return false;
+  }
   // The reload guard has to OUTLIVE the reload -- an in-page flag is
   // reset by the very navigation it is meant to bound, so a page served
   // from cache would reload every DOME_REFRESH seconds for ever.
@@ -1574,28 +1528,38 @@
   // if the page comes back still wearing the other one, that is a stale
   // cached page, not a flip, and one stale plate beats a reload loop.
   // The in-page flag is the fallback where storage throws (private
-  // modes, file:// origins).
-  var PLATE_KEY = 'celestial-plate-reload';
-  var plateReloaded = false;
-  function plateReloadTried(want) {
+  // modes, file:// origins).  One guard PER FRAGMENT KIND ('dome',
+  // 'pass'): two judges share the page, and a dome in step must not
+  // clear the mark a stale pass chart set, or that chart would reload
+  // the page on every one of its refetches until the next good cycle.
+  // Once ever per plate per kind, and no expiry: a page that keeps
+  // coming back on the other plate (a stale copy behind a proxy) wears
+  // it, rather than reloading every few minutes for ever.  The page and
+  // its fragments take the same record as their instant -- the fragment
+  // generator uses the cycle's own, which the page's generator found
+  // as the last good stamp unless a record committed while it ran --
+  // so they agree short of that, and there is no race worth an expiry.
+  var PLATE_KEY = 'celestial-plate-reload-';   // + the fragment kind
+  var plateReloaded = {};
+  function plateReloadTried(kind, want) {
     try {
-      return window.sessionStorage.getItem(PLATE_KEY) === want;
+      return window.sessionStorage.getItem(PLATE_KEY + kind) === want;
     } catch (e) {
-      return plateReloaded;
+      return plateReloaded[kind] === want;
     }
   }
-  function markPlateReload(want) {
-    plateReloaded = true;
+  function markPlateReload(kind, want) {
+    plateReloaded[kind] = want;
     try {
-      window.sessionStorage.setItem(PLATE_KEY, want);
+      window.sessionStorage.setItem(PLATE_KEY + kind, want);
     } catch (e) {
       // storage unavailable; the in-page flag bounds this page's life
     }
   }
-  function clearPlateReload() {
-    plateReloaded = false;
+  function clearPlateReload(kind) {
+    delete plateReloaded[kind];
     try {
-      window.sessionStorage.removeItem(PLATE_KEY);
+      window.sessionStorage.removeItem(PLATE_KEY + kind);
     } catch (e) {
       // nothing to clear
     }
@@ -1622,6 +1586,9 @@
       // background tab switched to while still streaming).
       domeRefetchWanted = true;
       return;
+    }
+    if (document.getElementById('dome-svg') === null) {
+      return;              // no dome panel on this page: nothing to refetch
     }
     var meta = domeFragMeta();
     var want = meta === null ? null : domeWant(meta);
@@ -1673,6 +1640,11 @@
     // A pre-stagger backdrop (no self-description) has no slot set to
     // walk: ask for slot 0 each interval, exactly as before the stagger.
     var fragName = domeFragName(want === null ? 0 : want.k);
+    if (fragName === null) {
+      return;              // the swap target names no set: nothing to fetch
+    }
+    var fragUrl = fragmentUrl(
+      document.getElementById('dome-svg').getAttribute('data-dome-dir'), fragName);
     var xhttp = new XMLHttpRequest();
     xhttp.onload = function() {
       // Anything but a fresh SVG keeps the dome we already have: a failed
@@ -1685,6 +1657,7 @@
       domeChecked = true;
       clearInFlight();
       if (this.status !== 200 && this.status !== 0) {
+        warnFragmentOnce('dome', fragUrl, 'came back HTTP ' + this.status);
         domeFetchProblem = {kind: 'http', status: this.status, file: fragName};
         return;
       }
@@ -1704,6 +1677,7 @@
         return;
       }
       if (this.responseText.indexOf('<svg') === -1) {
+        warnFragmentOnce('dome', fragUrl, 'is not a sky fragment');
         domeFetchProblem = {kind: 'junk', file: fragName};
         return;
       }
@@ -1716,31 +1690,14 @@
       if (wrap === null) {
         return;
       }
+      // The page's theme first (see pageThemeFlip): a fragment from a
+      // report regenerated on the other plate reloads the page, once.
+      if (pageThemeFlip(this.responseText, 'dome')) {
+        return;
+      }
       // The same slot of the same cycle (a late report re-serving what
       // we already show) is a no-op: swapping identical content would
       // only churn the baselines.
-      // The plate first.  This page wears the plate it was GENERATED
-      // with -- baked into a class on <html>, because the charts carry
-      // their colors inside their own markup -- but it keeps refetching
-      // fragments, and on theme = auto the report cycle that crosses
-      // sunrise draws them on the other plate.  Applying one would put a
-      // paper dome inside a night page (or the reverse at sunset) until
-      // somebody reloaded, which on a dashboard left open is never.  So
-      // the page reloads itself, ONCE: the report has already
-      // regenerated on the new plate, and this is the report-cycle flip
-      // the manual promises.  Once only -- if a cached page keeps
-      // disagreeing, one stale plate beats a reload loop.
-      var pm = /data-dome-palette="([a-z]+)"/.exec(this.responseText);
-      if (pm !== null && pm[1] !== PAGE_PALETTE) {
-        if (!plateReloadTried(pm[1])) {
-          markPlateReload(pm[1]);
-          window.location.reload();
-          return;
-        }
-      } else if (pm !== null) {
-        // In step -- so the next flip gets its own reload.
-        clearPlateReload();
-      }
       var m = /data-dome-ts="([0-9.]+)"/.exec(this.responseText);
       var ident = fragName + '|' + (m === null ? '' : m[1]);
       if (ident === appliedDomeFrag) {
@@ -1862,7 +1819,7 @@
       // caching would happily serve a stale sky.
       lastDomeFetch = Date.now() / 1000;
       lastDomeWant = want === null ? 0 : want.ts;
-      xhttp.open('GET', fragName + '?ts=' + Date.now(), true);
+      xhttp.open('GET', fragUrl + '?ts=' + Date.now(), true);
       // AFTER open(): older engines throw InvalidStateError on a timeout
       // set against an unopened request, and this whole block is inside
       // a try whose catch would swallow it -- costing the refetch
@@ -1895,7 +1852,6 @@
       console.log(e);
     }
   }
-  setInterval(refreshDome, DOME_REFRESH * 1000);
   // And once when the first loop packet lands (updateCurrent), which is
   // the moment the page learns what time it is.  The HTML can be minutes
   // or hours older than the fragments beside it -- a page served from a
@@ -1921,17 +1877,16 @@
   // inside its own minute -- is a no-op by the same-or-older guard in
   // the response handler, which reads the dome on the page at the
   // moment of comparison; nothing is seeded at load, so nothing depends
-  // on load order (the include is inline at the TOP of <body>, the dome
-  // hundreds of lines below, and a poll from the interval armed at eval
-  // can answer before either has parsed -- in which case refreshDome
+  // on load order (start() is called from the TOP of <body>, the dome
+  // hundreds of lines below, and a poll from the interval it armed can
+  // answer before either has parsed -- in which case refreshDome
   // defers, and this handler makes the refetch it owes).
-  addLoadEvent(function() {
+  function refetchDomeOnLoad() {
     if (domeRefetchWanted) {
       domeRefetchWanted = false;
       refreshDome();
     }
-  });
-  domeStaleGrace = Date.now() / 1000 + 5;
+  }
 
   // A laptop closed and reopened, or a tab left in the background and
   // brought forward: the timers stopped with the machine, and on the way
@@ -1960,23 +1915,6 @@
     }
     refreshDome();
   }
-  document.addEventListener('visibilitychange', function() {
-    if (!document.hidden) {
-      domeWake();
-    }
-  });
-  // Coming back to the front is not the only way a page resumes.  The
-  // back button restores from the bfcache with no visibility change at
-  // all, and an OS suspend with this tab already in front resumes
-  // without one either -- both land on exactly the case the grace exists
-  // for.  pageshow catches the first; the tick-gap check in localTick
-  // catches the second, since a one-second timer that did not fire for
-  // five seconds means the machine was not running.
-  window.addEventListener('pageshow', function(e) {
-    if (e.persisted) {
-      domeWake();
-    }
-  });
 
   // ---- a backdrop that stopped advancing -----------------------------------
   // Every one of refreshDome's failure paths keeps the sky it has and
@@ -2039,10 +1977,24 @@
   }
   function packetAge() {
     // How long the current packet has been in hand, by the stopwatch:
-    // both readings are the BROWSER's own clock, so a viewer's skew
+    // both readings are the browser's WALL clock, so a viewer's skew
     // cancels exactly and never reaches the arithmetic.  Capped at
     // EXTRAP_MAX so a feed that dies freezes the page rather than
     // running it on into fiction.
+    //
+    // The wall clock (Date.now) DELIBERATELY, not the monotonic one
+    // (performance.now) the badge's age backstop takes -- the page has
+    // both, and they answer different questions.  This one measures
+    // elapsed REAL time against an anchor computed for the packet's own
+    // instant, and every caller multiplies it by a rate, so time the
+    // machine spent SUSPENDED has to count: a monotonic clock stops
+    // during sleep, so a lid closed for twenty minutes would come back
+    // reading seconds, the EXTRAP_MAX freeze would never engage, and
+    // the dial would draw bodies at a position for a time that never
+    // happened -- the drift this cap exists to prevent, silently.  The
+    // wall clock's own hazard, an NTP correction landing mid-session,
+    // moves this by the step for one packet at most and is what the
+    // badge cannot tolerate and this can.
     return Math.min(Math.max(Date.now() / 1000 - latestRecvTs, 0), EXTRAP_MAX);
   }
   function serverNow() {
@@ -2442,7 +2394,7 @@
     // disagreed whenever the satellite crossed the shadow line mid-pass
     // (NOAA-21's Aug 8 shadow culmination wore the ring from rise while
     // the dome showed the live shadow entry).  Only when the feed
-    // carries the key: a trimmed fields line keeps the chart as drawn.
+    // carries the key: a feed without it keeps the chart as drawn.
     var sl = latest['almanac.' + b.tag + '.sunlit'];
     if (sl !== undefined) {
       passDotLit(b, sl !== false);
@@ -2462,35 +2414,68 @@
     if (pageTimedOut) {
       return;
     }
+    // The chart names its own fragment (data-pass-fragment, the set's
+    // file); no chart on this page, nothing to refetch.
+    var target = document.getElementById('pass-chart');
+    var fragName = target === null ? null : target.getAttribute('data-pass-fragment');
+    if (fragName === null || fragName === '') {
+      return;
+    }
+    var fragUrl = fragmentUrl(target.getAttribute('data-pass-dir'), fragName);
     var xhttp = new XMLHttpRequest();
     xhttp.onload = function() {
       var wrap = document.getElementById('pass-chart');
-      var sec = document.getElementById('pass-sec');
       var chart = document.getElementById('pass-wrap');
-      if (wrap === null || sec === null || chart === null ||
-          (this.status !== 200 && this.status !== 0)) {
+      // The section around the panel (id pass-sec) is the page's own
+      // chrome and optional: the bundled page hides it when the panel
+      // has nothing to show at all.
+      var sec = document.getElementById('pass-sec');
+      if (this.status !== 200 && this.status !== 0) {
+        warnFragmentOnce('pass', fragUrl, 'came back HTTP ' + this.status);
         return;              // a failed fetch keeps the chart we have
+      }
+      if (wrap === null || chart === null) {
+        return;
+      }
+      // The page's theme first, as for the dome -- and before the
+      // emptiness test, because the pass chart is refetched on pages
+      // that carry no dome, and an EMPTY chart (no pass in window) still
+      // arrives in its wrapper, carrying the theme: the flip must reach
+      // such a page while it waits for a pass.
+      if (pageThemeFlip(this.responseText, 'pass')) {
+        return;
       }
       if (this.responseText.indexOf('<svg') === -1) {
         // A well-formed EMPTY fragment is meaningful -- no visible pass
-        // among the configured satellites.  The chart area hides; the
-        // roster's honest rows keep the section up, which hides only
-        // when it has no roster either.  Junk keeps the chart we have.
-        if (!/\S/.test(this.responseText)) {
+        // among the configured satellites: bare (as the 8.x templates
+        // wrote it) or an empty .passfrag wrapper (9.0).  The chart area
+        // hides; the roster's honest rows keep the section up, which
+        // hides only when it has no roster either.  Junk keeps the chart
+        // we have.
+        if (!/\S/.test(this.responseText) ||
+            /^\s*<div class="passfrag"[^>]*>\s*<\/div>\s*$/.test(this.responseText)) {
           wrap.innerHTML = '';
           hideSkytip();
           chart.setAttribute('hidden', '');
-          if (sec.querySelector('.roster') === null) {
+          // ... unless the section holds something else to show: a
+          // roster, or a line the page put there (a refused set, an
+          // undeclared panel) -- the same rule pass_panel_hidden applies
+          // at first paint.
+          if (sec !== null && sec.querySelector('.cel-roster, .cel-skyhint') === null) {
             sec.setAttribute('hidden', '');
           }
           passBase = null;
+        } else {
+          warnFragmentOnce('pass', fragUrl, 'is not a pass-chart fragment');
         }
         return;
       }
       wrap.innerHTML = this.responseText;
       hideSkytip();
       chart.removeAttribute('hidden');
-      sec.removeAttribute('hidden');
+      if (sec !== null) {
+        sec.removeAttribute('hidden');
+      }
       passBase = null;       // baselines belong to the old chart
       // Synchronous, in this same task, so a chart whose pass is already
       // over is hidden before anything is painted -- once a packet is in
@@ -2500,7 +2485,7 @@
     };
     try {
       // Cache-busted, like the dome fragment.
-      xhttp.open('GET', 'pass-chart.txt?ts=' + Date.now(), true);
+      xhttp.open('GET', fragUrl + '?ts=' + Date.now(), true);
       // Timed out like the dome's fetch, and for the same reason: a
       // server that accepts the connection and never answers would
       // otherwise leave one request hanging every five minutes for the
@@ -2514,7 +2499,6 @@
       console.log(e);
     }
   }
-  setInterval(refreshPass, CHART_REFRESH * 1000);
 
   // ---- countdown central ---------------------------------------------------
   // The chip row under the header: d hh:mm:ss countdowns rendered on
@@ -2522,7 +2506,7 @@
   // with a packet (serverNow) -- each pure client arithmetic against an
   // event-tier loopdata field, computed once by the engine, cached
   // until the event, zero cost at this cadence.  Feature detection is
-  // the roster's: an ABSENT key (not on the fields line, or an almanac
+  // the roster's: an ABSENT key (not declared, or an almanac
   // that cannot serve it) leaves the chip's report-time first paint
   // alone; a key present but null is loopdata's honest "nothing ahead"
   // and hides the chip.  The windowed guests (supermoon, eclipse, a
@@ -2659,7 +2643,7 @@
           (nowTs < bestRise || (bestSet !== null && nowTs < bestSet + 60));
       chipShow('chip-pass', passShow);
       if (passShow) {
-        setHtml('chip-pass-k', satLabel(bestTag));
+        setHtml('chip-pass-k', esc(satLabel(bestTag)));
         if (nowTs < bestRise) {
           setHtml('chip-pass-d', T['appears in']);
           setHtml('chip-pass-v', fmtDHMS(bestRise - nowTs));
@@ -2737,7 +2721,7 @@
     if (showerTs !== null) {
       var showerLab = strAt('almanac.next_meteor_shower.label');
       if (showerLab !== null) {
-        setHtml('chip-shower-k', showerLab);
+        setHtml('chip-shower-k', esc(showerLab));
         var showerChip = document.getElementById('chip-shower');
         if (showerChip !== null &&
             showerChip.getAttribute('data-shower-label') !== showerLab) {
@@ -2750,7 +2734,7 @@
     // begins at the -18 sunset, ends at the -18 sunrise -- stargazers
     // care about both ends of the window.  A high-latitude summer
     // where -18 never comes serves nulls and hides the chip.  The
-    // keys are the fields-line spellings verbatim.
+    // keys are the declaration's spellings verbatim.
     if (hasKey('almanac(horizon=-18).sun.next_setting.unix_epoch.raw') ||
         hasKey('almanac(horizon=-18).sun.next_rising.unix_epoch.raw')) {
       var darkSet = num(latest, 'almanac(horizon=-18).sun.next_setting.unix_epoch.raw');
@@ -2874,12 +2858,43 @@
       var periTs = chipEvent('chip-peri-' + cometTag, periKey, nowTs, true);
       if (periTs !== null && hasKey(periKey)) {
         setHtml('chip-peri-' + cometTag + '-k',
-                fmt('{name} perihelion', {name: satLabel(cometTag)}));
+                fmt('{name} perihelion', {name: esc(satLabel(cometTag))}));
       }
     });
   }
 
   // ---- poll + local tick ---------------------------------------------------
+  // Server-now in milliseconds, from a response's own Date header, or NaN
+  // when the header cannot be read.  Date.parse only decodes the header's
+  // string form -- it never consults the local clock -- so this is the web
+  // server's reading of the time, not the viewer's.  An intermediate cache
+  // preserves the origin's Date and adds Age (RFC 9111), so server-now is
+  // Date + Age; without that a cached hit reports itself as young as it was
+  // when it was stored.  Date is not a CORS-safelisted response header, so
+  // a cross-origin loop_data_file reads NaN unless the server sends
+  // Access-Control-Expose-Headers: Date, and a page opened from file: has
+  // no headers at all -- the caller's own backstop covers both.  getHeader
+  // is passed in because an XHR spells this getResponseHeader(name) and a
+  // fetch Response spells it headers.get(name).  (weewx-weatherboard's,
+  // ported.)
+  // The local is `ms`, NOT `serverNow`: this file already has a
+  // serverNow(), and it is the STATION's clock (the page's own).  Two
+  // clocks, two names -- a local shadowing that function would leave a
+  // later edit in here calling it and silently getting a number.
+  function serverNowFromHeaders(getHeader) {
+    var ms = Date.parse(getHeader('Date'));
+    if (isNaN(ms)) {
+      return NaN;
+    }
+    var cacheAge = Number(getHeader('Age'));
+    if (isFinite(cacheAge) && cacheAge > 0) {
+      ms += cacheAge * 1000;           // a proxy's copy is older than it says
+    }
+    return ms;
+  }
+  function xhrHeaderReader(xhr) {
+    return function (name) { return xhr.getResponseHeader(name); };
+  }
   var lastTickTs = 0;
   function localTick() {
     var nowTs = Date.now() / 1000;
@@ -2944,10 +2959,29 @@
       }
       var result;
       try {
-        result = JSON.parse(this.responseText);
+        // Since weewx-loopdata 7.0 the file carries each declaring
+        // report's fields under the REPORT's name (the [StdReport]
+        // section, not the skin: one skin can be listed under two
+        // reports, in two languages), each rendered with that report's
+        // own units, formats and [Almanac] names.  This page reads its
+        // own entry and nothing else; everything below sees the flat
+        // record it always saw.  A file without the key is a
+        // weewx-loopdata older than 7.0 (the installer refuses to
+        // install beside one), or this report not declaring its fields;
+        // BAD DATA covers both -- the file is there, this page's data is
+        // not.  The name arrives through the config like every other
+        // string the report hands this script: a report name is any
+        // [StdReport] section name, quotes and non-ASCII included.
+        result = JSON.parse(this.responseText)[REPORT_NAME];
+        if (result === undefined) {
+          throw new Error('no ' + REPORT_NAME +
+                          ' entry in loop_data_file (weewx-loopdata 7.0 or ' +
+                          'later writes one per declaring report)');
+        }
       } catch (e) {
-        // A 200 with a non-JSON body: loop_data_file points at something,
-        // but not at weewx-loopdata's output.
+        // A 200 with a non-JSON body, or JSON without this report's
+        // entry: loop_data_file points at something, but not at
+        // weewx-loopdata's output for this page.
         setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
         console.log(e);
         return;
@@ -2968,9 +3002,10 @@
           // looking dead, which is what it is, and DEAD_FEED restores the
           // dome's marks on its own schedule.  8.3.3 and earlier stamped
           // these from the BROWSER's clock, which is the one clock this
-          // page may not read; the fields line the README prescribes
-          // always carries current.dateTime.raw, so a feed doing this is
-          // misconfigured and the badge says so.  (John, 2026-08-16.)
+          // page may not read; the skin's own declaration (its `clock`
+          // group) always carries current.dateTime.raw, so a feed doing
+          // this is misconfigured and the badge says so.  (John,
+          // 2026-08-16.)
           setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
           console.log('loop record has no current.dateTime.raw; ignored');
           return;
@@ -2995,6 +3030,7 @@
         // same packet is not news.
         if (latestTs !== prevTs) {
           latestRecvTs = nowTs;
+          latestRecvMono = performance.now();
         }
         // The first packet needs no case of its own any more: every new
         // packet checks the backdrop below, and the first is simply the
@@ -3002,26 +3038,59 @@
         // the slot the page was generated with, to the station's real
         // time.  A page served from a browser or CDN cache can be hours
         // stale, and that is the packet that repairs it.
-        // How old the data on show is -- two terms, each measured on ONE
-        // clock, never across the two.  How stale this record already was
-        // when the page first found it: its own station time against the
-        // page's generation instant, station against station.  Plus how
-        // long since a fresh record arrived HERE: browser against
-        // browser.  Through 8.3.3 this was Date.now() minus the packet's
-        // station time, which posted a skewed viewer's offset as a
-        // permanent "Ns ago" over a perfectly live feed.
+        // How old the data on show is, from the SERVER's own clock: the
+        // Date header stamped on the very response that carried this
+        // record, against the record's own station time.  Neither operand
+        // is the viewer's, so a viewer whose clock is wrong still reads
+        // the true age -- through 8.3.3 this was Date.now() minus the
+        // packet's station time, which posted a skewed viewer's offset as
+        // a permanent "Ns ago" over a perfectly live feed.
         //
-        // The first term is zero on any healthy feed, whose packets are
-        // newer than the page that reads them, and the six-second LIVE
-        // threshold absorbs a write that lags the archive instant.  It
-        // earns its place on the dead feed a viewer has just loaded:
-        // loopdata stopped an hour ago, the web server still serves the
-        // last file, and the first fetch stamps latestRecvTs -- so the
-        // second term alone reads zero and the badge would call hour-old
-        // data LIVE, resetting on every reload.  Against GEN_TS it reads
-        // the hour.
-        var age = Math.round(Math.max(0, GEN_TS - latestTs)
-                             + (nowTs - latestRecvTs));
+        // CAVEAT: the two operands are stamped by two machines -- the
+        // header by whatever web server answers, the record by the weewx
+        // station -- so both are assumed to keep NTP-grade time, and the
+        // skew between them is charged against the six-second LIVE
+        // threshold below.  (Measured on the author's deployment: one
+        // second between a response's Date and the packet it carried.)
+        //
+        // The backstop, for a response whose header cannot be read (a
+        // page opened from file:, a cross-origin feed that does not
+        // expose Date) -- 8.3.4's pair, each term measured on ONE clock,
+        // never across the two.  How stale this record already was when
+        // the page first found it: its station time against the page's
+        // generation instant, station against station.  Plus how long
+        // since a fresh record arrived HERE, by the browser's stopwatch.
+        // Both terms understate, so their sum is a LOWER bound on the
+        // true age and Math.max is safe: the backstop can only win where
+        // the header reads too young, which is a response served from a
+        // cache that did not add Age.
+        //
+        // What the header buys is the case neither term can see: weewxd
+        // takes the report cycle and loopdata down together.  The last
+        // packet is then NEWER than the page, so the first term clamps to
+        // zero -- correctly, the feed was healthy when the page was made
+        // -- and the first fetch of the stale file is new to this
+        // browser, so the second starts at zero.  An hour later the badge
+        // would leave LIVE within six seconds but count up from the page
+        // load, an hour short for as long as the page stands.  The header
+        // reads the hour on the first paint.
+        //
+        // performance.now(), not Date.now(), for the elapsed term: a
+        // difference of two Date.now() readings cancels a viewer's
+        // standing skew, but not an NTP correction landing mid-session,
+        // which steps the age by however far the clock moved.  A
+        // monotonic stopwatch cannot be stepped.  It can, on some
+        // platforms, fail to ADVANCE while the machine is suspended, so
+        // the backstop can come back short from a sleep; the header
+        // answers on the first poll after the wake, and a page with no
+        // readable header was standing on a lower bound already.
+        var age = Math.max(0, GEN_TS - latestTs)
+                  + (performance.now() - latestRecvMono) / 1000;
+        var serverNowMs = serverNowFromHeaders(xhrHeaderReader(this));
+        if (!isNaN(serverNowMs)) {
+          age = Math.max(age, serverNowMs / 1000 - latestTs);
+        }
+        age = Math.round(Math.max(0, age));
         setHtml("live-label", age <= 6 ? T['LIVE'] : fmt('{age}s ago', {age: age}));
         // Display the time of the last update, in the page's timezone.
         setHtml("last-update", fmtHMS(lastTs));
@@ -3066,7 +3135,7 @@
     }
     xhttp.ontimeout = xhttp.onerror;
     try {
-      xhttp.open("GET", "$Extras.loop_data_file", true);
+      xhttp.open("GET", LOOP_DATA_FILE, true);
       // AFTER open(), for the reason the dome's fetch documents: an
       // engine that throws InvalidStateError on a timeout set against an
       // unopened request would throw here inside this try, the catch
@@ -3078,4 +3147,126 @@
       console.log(e);
     }
   }
-</script>
+
+  // ---- start ---------------------------------------------------------------
+  var started = false;
+  function start(config) {
+    // Once only: a second call would arm every timer and listener twice.
+    if (started) {
+      console.log('celestial.start called twice; the second call is ignored');
+      return;
+    }
+    started = true;
+    if (config.version !== CELESTIAL_JS_VERSION) {
+      // Logged, not refused: the config is what the report emitted, and
+      // inside a major version it only gains keys.  There are no
+      // defaults here -- the report's config_dict is the one place they
+      // live -- so a config a report did not build is not supported.
+      console.log('celestial.js ' + CELESTIAL_JS_VERSION +
+                  ' started with a version ' + config.version + ' config');
+    }
+    page_update_pwd = config.page_update_pwd;
+    refresh_rate = config.refresh_rate;
+    expiration_time = config.expiration_time;
+    // Timezone for displayed times: the station's zone, auto-detected by
+    // the report; the time_zone Extras option overrides ('browser' forces
+    // the viewer's browser-local zone), and empty falls back to
+    // browser-local too.
+    time_zone = config.time_zone;
+    if (time_zone === 'browser') {
+      time_zone = '';
+    }
+    // An unknown zone name must not break every render: probe once and fall
+    // back to the browser's local zone.
+    try {
+      new Date().toLocaleString("en-US", time_zone === '' ? {} : {timeZone: time_zone});
+    } catch (e) {
+      console.log('bad time_zone "' + time_zone + '", using browser-local');
+      time_zone = '';
+    }
+    STATION_LAT = config.station_lat;
+    GEN_TS = config.gen_ts;
+    PER_AU = config.per_au;
+    DIST_LABEL = config.dist_label;
+    // The report's language drives toLocaleString (the satellite rosters'
+    // pass times and the frozen-sky line's time; the header's "updated"
+    // stamp and the chip details are 24-hour in every language, matching
+    // the template's bake); an unknown tag must not break every render.
+    LOCALE = config.locale;
+    try {
+      new Date().toLocaleString(LOCALE);
+    } catch (e) {
+      console.log('bad lang "' + LOCALE + '", using en-US');
+      LOCALE = 'en-US';
+    }
+    // Everything this script composes is translated at generation time
+    // and arrives here: body names from the report's [Almanac] section
+    // (the same source as the almanac's .label tag), cardinals from the
+    // report formatter's compass ordinates, and the badge/roster/chip
+    // strings from [Texts].  All three ride through json.dumps, which
+    // \u-escapes every non-ASCII character -- the report's html_entities
+    // encoding can never touch them, and dial labels land via textContent
+    // where entities would show literally.  Javascript key literals into
+    // T must spell non-ASCII with the same \u escapes.
+    BODY_LABELS = config.body_labels || {};
+    CARDINALS = config.cardinals || [];
+    T = config.texts || {};
+    // The satellite set follows the station's [Skyfield] [[Satellites]]
+    // and the comet set its [[Comets]], both enumerated by the report
+    // through weewx-skyfield's public satellite_names()/comet_names();
+    // the page builds its roster rows from the same lists, so rows and
+    // live layer always agree.  Comets ride the DIAL, not the dome: the
+    // dome fragments already carry their diamonds, redrawn every backdrop
+    // refetch -- nothing to nudge at comet speed.
+    SAT_NAMES = config.sat_names || [];
+    COMET_NAMES = config.comet_names || [];
+    REPORT_NAME = config.report_name;
+    // A report with no loop_data_file hands over '': nothing is polled
+    // (the empty URL is the page's own -- a whole page every
+    // refresh_rate seconds for nothing) and the badge says BAD DATA --
+    // check loop_data_file, naming the option, once the label has parsed.
+    LOOP_DATA_FILE = config.loop_data_file;
+    PAGE_THEME = config.theme;
+    DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
+
+    // The timers, load handlers and listeners, in one place and in this
+    // order: the load handlers chain in registration order (addLoadEvent),
+    // so the first packet's fetch precedes the deferred paints, which
+    // precede the deferred backdrop refetch.
+    setPageExpirationTimer();
+    if (LOOP_DATA_FILE === '') {
+      addLoadEvent(function() {
+        setHtml('live-label', T['BAD DATA \u2014 check loop_data_file']);
+      });
+    } else {
+      setInterval(updateCurrent, refresh_rate * 1000);
+      addLoadEvent(updateCurrent);
+    }
+    setInterval(localTick, 1000);
+    addLoadEvent(renderOnLoad);
+    FRAGMENT_ROOT = config.root;
+    setInterval(refreshDome, DOME_REFRESH * 1000);
+    addLoadEvent(refetchDomeOnLoad);
+    domeStaleGrace = Date.now() / 1000 + 5;
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) {
+        domeWake();
+      }
+    });
+    // Coming back to the front is not the only way a page resumes.  The
+    // back button restores from the bfcache with no visibility change at
+    // all, and an OS suspend with this tab already in front resumes
+    // without one either -- both land on exactly the case the grace exists
+    // for.  pageshow catches the first; the tick-gap check in localTick
+    // catches the second, since a one-second timer that did not fire for
+    // five seconds means the machine was not running.
+    window.addEventListener('pageshow', function(e) {
+      if (e.persisted) {
+        domeWake();
+      }
+    });
+    setInterval(refreshPass, CHART_REFRESH * 1000);
+  }
+
+  return {start: start};
+})();

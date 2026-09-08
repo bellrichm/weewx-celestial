@@ -2,7 +2,7 @@
 title: Configuration
 layout: default
 nav_order: 6
-description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone, theme — the dark and light plates, the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, and how the page degrades across almanac tiers.
+description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone, theme — the dark and light plates, the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, how the page degrades across almanac tiers, and the two settings that embed the panels in another skin.
 ---
 
 # Configuration
@@ -11,20 +11,38 @@ description: The CelestialReport options in weewx.conf — loop_data_file, refre
 
 ---
 
-Installing registers the report; its options live in `weewx.conf`:
+Installing registers the report; its options live in `weewx.conf`.  This
+is what a **fresh** install writes — see [what an existing station
+sees](#upgrading-an-existing-station) below, which is different:
 
 ```
 [StdReport]
     [[CelestialReport]]
+        #lang = en
+        #theme = dark
         HTML_ROOT = celestial
         enable = true
         skin = Celestial
+        [[[LoopData]]]
+            [[[[fields]]]]
+                satellites = almanac.iss.az, almanac.iss.alt, ...
+                comets = almanac.halley.az, almanac.halley.alt, ...
         [[[Extras]]]
             loop_data_file = ../loopdata/loop-data.txt
-            refresh_rate = 2
-            expiration_time = 24
+            #refresh_rate = 2
+            #expiration_time = 24
+            #time_zone = America/New_York
             page_update_pwd = foobar
 ```
+
+An option that merely selects a default is written **commented out**, with
+the default shown.  Nothing is lost: with the line commented, the value
+in force is the one in `skins/Celestial/skin.conf`, which every upgrade
+replaces — so if a later release picks a better default, your station
+follows it.  Uncomment one to pin your station to a value of your own.
+`loop_data_file` and `page_update_pwd` are live because neither is a
+default: the first is derived for your station at install, the second is a
+placeholder you are meant to replace.
 
 - `loop_data_file`: where the javascript fetches loop data; relative paths
   are relative to this report's HTML_ROOT.  You should not have to set
@@ -38,31 +56,48 @@ Installing registers the report; its options live in `weewx.conf`:
   says so, and the page's badge will tell you the same:
   `NO DATA (HTTP 404) — check loop_data_file`.
 - `refresh_rate`: seconds between loop-data polls (match weewx-loopdata's
-  write cadence: 2 for the Vantage driver).  The countdown chips and the
+  write cadence: 2 for the Vantage driver).  Ships commented out.  The countdown chips and the
   satellite rosters advance with each packet a poll brings, since the
   page's clock is the packet's own.
 - `expiration_time`: hours the page keeps polling before requiring a click.
+  Ships commented out.
   An unattended browser therefore stops polling overnight instead of for
-  ever; the badge reads `CLICK-ME` and a click resumes it.
+  ever; the badge reads `CLICK-ME` and a click resumes it.  `0` means
+  never expire, which is for a page in another skin that runs an expiry
+  of its own — see
+  [Panels in your own skin](own-skin.md#two-ids-where-your-live-layer-and-this-one-meet).
 - `page_update_pwd`: appending `?pageUpdate=<page_update_pwd>` to the URL
   disables expiration for that view.  The password is visible to anyone
   reading the page source, so treat it as a convenience, not a secret.
 - `time_zone`: the timezone of displayed times.  By default the
   *station's* zone is auto-detected at report time, so remote viewers see
   station time.  Set an IANA name (`America/New_York`) to force a zone,
-  or `browser` for the viewer's local zone.  It ships commented out in
-  `skin.conf`; set it in `weewx.conf` beside the options above rather
-  than uncommenting it there, because an upgrade overwrites the skin.
+  or `browser` for the viewer's local zone.  It ships commented out
+  above — and unlike the others, the line there is an **example, not a
+  default**: this option's default is having no value at all, which is
+  what makes the zone auto-detect.  Uncomment and edit it to override.
 - `lang`: the page's language — see [Translations](i18n.md).
 - `theme`: the page's plate — `dark` (the default), `light`, or `auto`.
   See [Dark, light and auto](#dark-light-and-auto) below.
 - `title` / `meta_title` (Extras): override the page heading and the HTML
   `<title>`.
+- `[[[LoopData]]] [[[[fields]]]]`: the satellite and comet fields the
+  page reads, declared to weewx-loopdata — written by the installer for
+  your `[Skyfield]` sets, rebuilt on every install, not for editing.  See
+  [the declared fields](#the-declared-fields) below.
+
+## Upgrading an existing station
+
+Nothing you have set is rewritten: WeeWX fills in only what is absent from
+`weewx.conf`.  So your stanza will not come to look like the one above —
+a station installed before this release keeps `refresh_rate` and
+`expiration_time` live and has no `lang`, `theme` or `time_zone` lines,
+which is fine; copy from above if you want them.
 
 ## Where the loop-data file should live
 
 Where the file lands is weewx-loopdata's decision — its `loop_data_dir`,
-relative to its target report — and this page simply follows: whatever
+relative to its sample report — and this page simply follows: whatever
 `loop_data_file` you set has to be the URL that reaches it.  The
 installer works that out for you whenever both sit inside your reports
 tree, which is the arrangement weewx-loopdata ships with and where most
@@ -159,10 +194,11 @@ configuration:
 - **The satellite set** is `[Skyfield] [[Satellites]]` in `weewx.conf`
   (weewx-skyfield's installer defaults to the ISS and Tiangong).  The
   skin enumerates whatever is configured; each satellite needs its
-  nineteen fields-line entries (see
-  [Fields reference](fields-reference.md#satellites-19-entries-each)) to go live, and a
-  display name is best set under `[StdReport] [[Defaults]]
-  [[[Almanac]]]` so the loop feed sees it too.  The bundled
+  nineteen declared fields (see
+  [Fields reference](fields-reference.md#satellites-19-entries-each)) to go live,
+  which the installer writes for the set it finds, and a display name is
+  best set under `[StdReport] [[Defaults]] [[[Almanac]]]` so every
+  report calls it the same thing.  The bundled
   [`--add-satellite` utility](satellites-and-comets.md#adding-and-removing-satellites) makes
   all three edits in one command.
 - **The backdrop steps once a minute.**  Each report cycle renders a
@@ -187,7 +223,8 @@ configuration:
   configured comet gets a diamond on the Geocentric dial — placed like
   a planet, its tail fanning anti-sunward, solid when naked-eye bright
   — a roster row, and a windowed perihelion countdown chip; each needs
-  its six fields-line entries to go live.  The bundled
+  its six declared fields to go live, which the installer writes for
+  the set it finds.  The bundled
   [`--add-comet` utility](satellites-and-comets.md#adding-and-removing-comets) makes the three
   edits in one command.  The dome and the pass chart draw their own
   comet diamonds and meteor shower radiants inside weewx-skyfield's
@@ -198,7 +235,7 @@ configuration:
 The chip row at the top of the page has no options of its own: the
 always-on chips (the soonest visible pass, sunset/sunrise, the meteor
 shower peak, and astronomical darkness — begins at the −18° sunset,
-ends at the −18° sunrise, whichever is next) follow the fields line,
+ends at the −18° sunrise, whichever is next) follow the declaration,
 and the windowed guests (the next equinox or solstice — named by the
 season it begins — Earth's perihelion or aphelion, the next supermoon,
 the next eclipse visible from
@@ -216,7 +253,7 @@ own Sky page shows a perihelion as a dated chip up to a year out; the
 ## Adding and removing satellites and comets
 
 Each satellite or comet takes three separate `weewx.conf` edits — its
-`[Skyfield]` entry, its fields-line entries, and its display name — and
+`[Skyfield]` entry, its declared fields, and its display name — and
 the extension bundles `--add-satellite`/`--add-comet` to make all three
 in one command (with `--remove-satellite`/`--remove-comet` as exact
 inverses).  That is its own page:
@@ -229,7 +266,8 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.3.2** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.3.4** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.3.2** or 2.3.3 | The same page.  2.3.4 adds one thing this skin uses: a way to ask whether the sky can be drawn at all without drawing it, so the panels beside the dome — the two rosters and the Next Visible Pass — settle their state without a dome render.  On an older weewx-skyfield the page asks the way it always has, by drawing the dome |
 | **weewx-skyfield 2.1** | Everything but the pass chart's dot leaving the chart when the pass ends — the chart states its own rise and set only from 2.3.2, so the page falls back to the loop feed's window and the dot returns to its drawn place at set |
 | **weewx-skyfield 2.0** | Everything but the comets and the shower/supermoon chips (the sunset, darkness and pass chips still count) |
 | **weewx-skyfield** (earlier) | Everything but the satellites and their chart; the dome's sun/moon/planet marks step only at the backdrop step (the live-nudge hooks are 2.0's) |
@@ -255,22 +293,133 @@ installation from one that never asked.
 The footer credit is generated truthfully for whichever almanac actually
 serves the page.
 
-## The fields line
+## The declared fields
 
-Nothing about the fields line is configured in this skin — it belongs to
-weewx-loopdata — but two rules govern it, and breaking either is a
-common cause of a page that will not go live:
+The page declares the loop-data fields it reads to weewx-loopdata (7.0
+or later), which evaluates them on every loop packet and writes them
+into `loop-data.txt` under the report's name — `CelestialReport` — in
+this report's own units, formats and `[Almanac]` names.  The declaration
+is in two places, and neither wants editing:
 
-- `[LoopData] [[Include]] fields` must stay a **bare comma-separated
-  list** — no brackets, no quotes.  (Almanac entries are single-argument
-  precisely so they never contain a comma.)
-- Extra fields are harmless: weewx-loopdata publishes whatever you list,
-  and the page reads only its own keys.  If your own pages consume other
-  fields (as, for example,
-  [PaloAltoWeather.com](https://www.paloaltoweather.com/celestial.html)'s
-  do), keep them on the line — and never trim it to the Celestial page's set
-  without checking those pages first.
+- the fields that never change, in the skin's own `skin.conf`
+  (`[LoopData] [[fields]]`), and
+- the satellite and comet fields, which follow your `[Skyfield]` sets, in
+  the `satellites` and `comets` groups of the report's stanza above —
+  written by the installer and by `--add-satellite`/`--add-comet`, and
+  rebuilt whenever either runs.
 
-Every entry the skin reads, grouped by what it feeds, plus the complete
-line for hand editing, is in the
+A field of your own — for a page of your own reading this report's entry,
+say — goes in a **group of your own** in that stanza; weewx-loopdata
+merges the groups by name, so the skin's and the installer's are left
+alone.  The stanza is the report's, though: `weectl extension uninstall
+celestial` removes it whole, your groups with it, exactly as it removes
+`[[[Extras]]]` — so keep a copy of any group of your own if you uninstall
+(the 6.x upgrade path does).  It removes only `[[CelestialReport]]`: a
+second report of your own running the Celestial skin keeps its
+`satellites` and `comets` groups after an uninstall, and weewx-loopdata
+goes on evaluating those fields every loop packet for a page that is no
+longer there — delete that report's `[[[LoopData]]]` section by hand.
+(A report of *another* skin embedding the panels is different: uninstall
+that skin and its groups are taken away by the next install or utility
+run, because the skin's `skin.conf` — where its `celestial_panels` lives
+— has gone with it.  See
+[Panels in another skin](#panels-in-another-skin) below.)  The older `[LoopData] [[Include]] fields` line is not this page's
+business: since 8.5 the installer never writes it — it only reads it to
+count the entries this page now declares itself, which weewx-loopdata
+evaluates twice per packet while the line stands — and weewx-loopdata
+retires it in a later release.  If your own pages still read it (as, for example,
+[PaloAltoWeather.com](https://www.paloaltoweather.com/celestial.html)'s
+do), that is between them and weewx-loopdata's
+[Declaring fields](https://chaunceygardiner.github.io/weewx-loopdata/declaring-fields.html)
+page.
+
+Every entry the skin reads, grouped by what it feeds, plus both halves of
+the declaration as shipped, is in the
 [Fields reference](fields-reference.md).
+
+## Panels in another skin
+
+Since 9.0 the page's panels can be embedded in a skin of your own — the
+countdown row, the Geocentric, the sky dome and the Next Visible Pass
+chart, live layer and all.  The whole recipe is
+[Panels in your own skin](own-skin.md); two pieces of it are
+configuration and belong here.
+
+**`celestial_panels`** names the panels a page embeds — any of
+`countdown`, `geocentric`, `dome` and `pass` — and **belongs in the
+consuming skin's own `skin.conf`**, at the top level:
+
+```
+celestial_panels = dome, pass
+```
+
+That is where a well-behaved skin puts it: which panels a page embeds is
+a property of its templates, the same on every station, so declaring it
+with the skin means installing that skin needs no edit to `weewx.conf`
+on any machine.  Every report running that skin inherits it, which is
+what a second report — a metric twin, say — wants.
+
+A report's own stanza still overrides it, in the order WeeWX merges in,
+for a station that needs one report to differ:
+
+```
+[StdReport]
+    [[MyReport]]
+        HTML_ROOT = public_html/mysite
+        skin = MySkin
+        celestial_panels = dome
+```
+
+Set in both places, the run logs which file answered, and warns when the
+two disagree — the stanza wins, and a stale one is easy to forget.
+
+`weectl extension install` and the `--add-satellite`/`--add-comet`
+utilities then maintain that report's `satellites` and `comets` groups
+exactly as they maintain the Celestial report's, and give it only the
+groups its named panels read: satellites for the dome and the Next
+Visible Pass, comets for the Geocentric, both for the countdown row.  Do
+re-run the installer after adding the key, and restart weewxd so
+weewx-loopdata reads the declaration.
+
+Three things about it are worth knowing before you write it.  On any
+report carrying the key, the two group names are this extension's, so a
+declared field of your own belongs under a name of your own.  The key
+belongs on a report and nowhere else: under `[[Defaults]]`, or at
+`[StdReport]`'s top level, WeeWX would merge it into every report, so
+both are refused — named once, as the station's own misconfiguration, in
+the installer's output and on the page of any other skin's report that
+carries no key of its own.  And a name that is not a panel
+costs that report its declaration and nobody else's, every run.  A page
+whose panels are not declared, or whose declaration is out of date, says
+so where the panel renders and in the weewxd log.
+
+**`[CelestialFragments]`** goes in the consumer *skin*'s `skin.conf`, and
+declares the dome backdrop sets the report writes — one subsection per
+set.  It is needed only for the sky dome and the Next Visible Pass chart,
+and only when the default single set is not what the skin wants: two
+label scales for two screen sizes, a night dome inside a light site, or
+the files kept in a subdirectory:
+
+```
+[CelestialFragments]
+    [[astro]]
+        directory = astro
+    [[smartphone]]
+        prefix = dome-svg-sp
+        label_scale = 2.2
+        directory = astro
+```
+
+| Key | What it does |
+|---|---|
+| `prefix` | The set's file names: `<prefix>.txt`, `<prefix>-1..9.txt`, `<prefix>-pass.txt`.  Default `dome-svg`, whose pass fragment keeps the name `pass-chart.txt`.  One set per prefix, whatever their directories; two sets that would *write* the same file are refused separately, judged by what `kind` says each writes |
+| `label_scale` | The chart labels' scale, passed to weewx-skyfield; default 1.0 |
+| `theme` | `dark`, `light` or `auto`, spelled exactly as the report option is; default the report's own |
+| `directory` | Where under the report's `HTML_ROOT` the set is written; default `HTML_ROOT` itself.  A plain relative path — nothing that could leave `HTML_ROOT` |
+| `kind` | Which fragments the set is for — `dome`, `pass` or `both` (the default).  A skin showing the dome on one page and the chart on another, at different label scales, declares a set for each; without this each would write the other's files every cycle for a page that never fetches them |
+
+The page names the set it embeds in the call
+(`$celestial.dome_html($almanac, set='astro')`), so scale, plate, file
+names and directory all follow from the one declaration.  The bundled
+Celestial skin declares no section at all: one set, `dome-svg`, at scale
+1.0 on the report's own plate, in `HTML_ROOT`.

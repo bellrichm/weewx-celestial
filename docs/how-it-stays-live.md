@@ -50,6 +50,22 @@ working has no working live layer at all — the page stands as the report
 drew it, or where the last packet left it, and the LIVE badge is where
 that fault is reported.
 
+One number does come from a third clock, and only that one: the age the
+badge reports.  It is read from the `Date` header of the very response
+that carried the loop record — the serving machine's own reading of the
+time — against the record's own station timestamp, so neither operand is
+the viewer's.  That is what lets the badge tell the truth in the one
+case the page cannot work out for itself: weewxd takes the report cycle
+and the loop feed down together, so the last packet written is newer
+than the page that reads it, and the stale file is new to whichever
+browser has just loaded that page.  Both of the page's own measures read
+zero there; the header reads the real hour.  Where no `Date` can be read
+— a page opened from `file:`, a cross-origin feed that does not expose
+the header — the page falls back on what it can measure itself.  Header
+and record are stamped by two machines, the web server and the weewx
+station, so both are assumed to keep NTP-grade time; the skew between
+them is charged against the badge's six-second `LIVE` threshold.
+
 ## First paint, then live
 
 Every value cell is filled twice.  At report time it is rendered from
@@ -97,9 +113,9 @@ zero and then becomes the next sunrise with no reload, and why a pass
 chip rolls to the next pass the moment the current one ends.
 
 The report also bakes each event's target timestamp into the page, so a
-chip whose event the feed does not carry — a lesser almanac, a trimmed
-fields line — still counts down toward the instant the page knew about
-at generation time, on the packets that do arrive.  With no feed at all
+chip whose event the feed does not carry — a lesser almanac, a group
+of your own that overrode it — still counts down toward the instant the
+page knew about at generation time, on the packets that do arrive.  With no feed at all
 the chips stand at their generation values, like everything else on the
 page: the clock they count on is the packet's (see
 [Whose time it is](#whose-time-it-is)).
@@ -107,8 +123,10 @@ page: the clock they count on is the packet's (see
 ## The two fetched fragments
 
 The dome and the Next Visible Pass chart are drawn by weewx-skyfield at
-report time, but the open page keeps them current by refetching small
-fragments:
+report time — written into the report's own directory by a generator this
+extension adds to the report, `user.celestial_page.FragmentGenerator`,
+which is the name to grep for in the weewxd log if they stop arriving —
+but the open page keeps them current by refetching small fragments:
 
 - **Dome backdrops.**  Each report cycle renders a staggered set of them,
   spaced `max(60 s, interval/10)` across the archive interval, and the
@@ -163,16 +181,18 @@ Both fragments arrive as SVG with their colors already inside them, which
 is why the page's plate — dark or light — is settled when the report is
 generated rather than in the browser (see
 [Dark, light and auto](configuration.md#dark-light-and-auto)).  Each
-fragment is rendered on the palette the page around it was rendered with,
-resolved from the report's own generation instant, so a refetch can never
-land a night dome in a light page.
+fragment carries the theme the report was on when it wrote it, resolved
+from the report's own generation instant, so a page never finds its own
+plate switched under it by a refetch.
 
 On `theme = auto` a report cycle eventually crosses sunrise, and an open
 page cannot restyle itself — its plate was baked in when it was
-generated.  So each backdrop declares which plate it was drawn on, and a
-page that finds itself wearing the other one reloads — once per flip, and
-never again if it comes back still disagreeing, which would mean a cached
-copy rather than a flip.  The change reaches a page left open overnight
+generated.  So each fragment declares the theme the report was on when it
+wrote it, and a page that finds a fragment from the other one reloads —
+once per flip, and never again if it comes back still disagreeing, which
+would mean a cached copy rather than a flip.  (A fragment set declared
+on a plate of its own is drawn on that plate whatever the page's, and is
+never mistaken for a flip.)  The change reaches a page left open overnight
 within a minute of the report cycle that makes it, rather than waiting
 for someone to press reload.
 

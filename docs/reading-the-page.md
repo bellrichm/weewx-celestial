@@ -21,6 +21,14 @@ whose almanac cannot serve it shows an install hint in its place rather
 than disappearing, and the page never fails to generate because a value is
 missing; see [the almanac tiers](configuration.md#the-almanac-tiers).
 
+A panel may also carry a line about its own **configuration** rather than
+its almanac — that its live fields are not declared, or that the
+declaration is out of date and wants the installer re-run.  A panel in
+that state first-paints correctly and then never moves, so the line is
+there to say why; each one names what to do, and
+[Troubleshooting](troubleshooting.md#a-panel-says-its-fields-are-not-declared)
+has them all.
+
 ## The header, and the badge that tells the truth
 
 The header carries the page title, the station's coordinates, and the
@@ -34,12 +42,19 @@ rather than a hopeful one:
 
 | Badge | What it means |
 |---|---|
-| `LIVE` | A packet arrived within the last 6 seconds.  Everything on the page is current. |
-| `12s ago` | The data on show is more than 6 seconds old; the number is its age.  Brief gaps are normal; a number that climbs means the feed has stopped — including the case where the web server goes on serving the same file loopdata stopped writing. |
+| `LIVE` | The record on show is less than 6 seconds old.  Everything on the page is current. |
+| `12s ago` | The record on show is more than 6 seconds old; the number is its age.  Brief gaps are normal; a number that climbs means the feed has stopped — including the case where the web server goes on serving the same file loopdata stopped writing.  A small number that stands rather than climbs is the feed arriving that late: the packets keep coming, but each one reaches the web server seconds after it was written; see [The badge reads a few seconds and never `LIVE`](troubleshooting.md#the-badge-reads-a-few-seconds-and-never-live). |
 | `NO DATA (HTTP 404) — check loop_data_file` | The page fetched the loop-data file and the web server said it isn't there.  This is a wiring problem, not an astronomy problem — see [`loop_data_file`](configuration.md). |
-| `BAD DATA — check loop_data_file` | The file was served but could not be parsed as the expected json — or it parsed but carried no `current.dateTime.raw`, which the page needs to place anything at all. |
+| `BAD DATA — check loop_data_file` | The file was served but could not be parsed as the expected json — or it parsed but carried no entry for this report (the browser console says `no "CelestialReport" entry in loop_data_file`: a weewx-loopdata older than 7.0, or one not restarted since the install), or its entry carried no `current.dateTime.raw`, which the page needs to place anything at all. |
 | `OFFLINE` | The fetch itself failed — no network, or the web server is down. |
 | `CLICK-ME` | The page stopped polling after `expiration_time` hours.  Click it to resume. |
+
+The age is measured from the record's own timestamp to the clock of the
+machine that served it — never to your browser's, which may be set to
+anything at all.  It therefore counts the time the loop-data file takes
+to reach the web server, which on a station that publishes to a remote
+host is not always under six seconds.  See
+[Whose time it is](how-it-stays-live.md#whose-time-it-is).
 
 While the feed is stale the readouts freeze rather than drift: the page
 extrapolates motion for at most 120 seconds past the newest packet, then
@@ -85,9 +100,9 @@ becomes an `hh:mm:ss` clock.
 
 {: .note }
 A chip you never see is not a fault.  A chip is hidden when its field is
-absent from the fields line, when the almanac cannot compute it, or —
-for the windowed guests — when the event is still more than 30 days out.
-See [the fields line](configuration.md#the-fields-line).
+missing from the feed, when the almanac cannot compute it, or — for the
+windowed guests — when the event is still more than 30 days out.  See
+[the declared fields](configuration.md#the-declared-fields).
 
 ## The two plates
 
