@@ -93,13 +93,13 @@ stanza is already there, which is every existing station and therefore
 every test either side would naturally have run.  Found by the
 liveseasons session reading weectl rather than trusting the happy path.
 
-Two things that ordering settles in our favour: `_install_files` is line
+Two things that ordering settles in our favor: `_install_files` is line
 197, so the consumer's `skin.conf` IS on disk when `configure()` runs and
 the key lookup of half 1 is safe; and celestial already solves this exact
 problem for itself with `declare_page_fields(..., ensure_default=True)`,
 which exists because `[[CelestialReport]]` does not exist yet when
 celestial's own `configure()` runs.  `pending` is that same mechanism
-generalised: the caller hands over the stanza it is about to have
+generalized: the caller hands over the stanza it is about to have
 injected, celestial reads which report it names and which skin it runs,
 writes the groups under that report name, and `_inject_config` then fills
 `skin`, `HTML_ROOT` and the rest in around them, because
@@ -109,7 +109,7 @@ writes the groups under that report name, and `_inject_config` then fills
 first proposal, and the reason it loses does not depend on any
 particular stanza: weectl's install ordering is knowledge belonging to
 the repo that owns the report stanza, and a consumer that reproduces
-`_inject_config`'s behaviour is copying a private implementation detail
+`_inject_config`'s behavior is copying a private implementation detail
 that can change under it.  Six lines and no ordering knowledge outside
 celestial beats a correct hand-merge.  The consumer passes no report NAME
 either — the stanza carries it, so a station with two reports needs no
@@ -266,7 +266,7 @@ earlier and more clearly.
 **The skin path is resolved from the GLOBAL `[StdReport] SKIN_ROOT`, on
 purpose.**  WeeWX ignores a `SKIN_ROOT` set on an individual report:
 `reportengine.py` builds a report's skin path from `WEEWX_ROOT` +
-`config_dict['StdReport']['SKIN_ROOT']` + that report's `skin`.  Honouring
+`config_dict['StdReport']['SKIN_ROOT']` + that report's `skin`.  Honoring
 a per-report override here would make celestial read a different
 `skin.conf` than WeeWX does, and the two would disagree silently about
 which file a report's options come from.

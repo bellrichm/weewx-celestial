@@ -89,6 +89,32 @@ def loader():
                      "%s.  Upgrade weewx-loopdata first, then install "
                      "weewx-celestial." % LOOP_DATA_VERSION)
 
+        # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or on
+        # the built-in almanac, with less on it -- so its ABSENCE is not a
+        # refusal.  But 9.1 is pinned to 2.4 rather than kept working
+        # across a range: the pass chart's sunlit dot flips by exchanging
+        # the sky-fill-/sky-stroke- role classes 2.4 introduced (the
+        # 2.3.x attribute path is gone), and the light plate's brass is
+        # 2.4's value.  On an older weewx-skyfield the dot silently stands
+        # as drawn through a pass and the paper page disagrees with its
+        # own charts about brass -- neither says anything in any log.  So
+        # a skyfield that IS there and is too old refuses, here, where the
+        # user is reading.  Gated on installing() for the same reason as
+        # the weewx-loopdata check above.
+        try:
+            from user.wxskyfield import WXSKYFIELD_VERSION
+        except Exception:
+            WXSKYFIELD_VERSION = None      # absent, or broken: not ours to judge
+        if (WXSKYFIELD_VERSION is not None
+                and version_compare(str(WXSKYFIELD_VERSION), '2.4') < 0):
+            sys.exit("weewx-celestial 9.1 requires weewx-skyfield 2.4 or later, "
+                     "found %s.  Upgrade weewx-skyfield first, then install "
+                     "weewx-celestial.  (weewx-skyfield is optional -- the page "
+                     "renders without it -- but an older one is no longer kept "
+                     "in step: the Next Visible Pass dot would not flip and the "
+                     "light theme's accent would disagree with the charts.)"
+                     % WXSKYFIELD_VERSION)
+
     return CelestialInstaller()
 
 
@@ -179,7 +205,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.0.1",
+            version = "9.1",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

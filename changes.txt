@@ -1,6 +1,89 @@
 weewx-celestial change history
 ------------------------------
 
+9.1 2026/09/08
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.4.  9.1 is
+  pinned to 2.4 rather than kept working across a range of it.  The
+  light plate's brass is 2.4's value, and the Next Visible Pass chart's
+  sunlit dot flips by exchanging the role classes 2.4 introduced.
+  The installer REFUSES to install beside a weewx-skyfield older than
+  2.4, naming the version it found.  Having none at all is not a
+  refusal -- the page still renders on PyEphem or the built-in almanac,
+  with less on it -- but an older one that IS there would leave the
+  paper plate's brass disagreeing with the charts' and the pass dot
+  standing as drawn through a pass rather than going hollow in the
+  earth's shadow, neither of which says anything in any log.
+
+- Pluto comes off the Geocentric dial.  It has not been a planet since
+  2006 and, at magnitude 14.5, it is nine and a half magnitudes fainter
+  than the faintest star the sky dome draws at its default limit --
+  some six thousand times fainter -- so on a page about what is
+  overhead it was a dot nobody at the station could ever see.  The dial
+  now ends at Neptune before the jump to Proxima Centauri, and the
+  roster loses its row; configured comets take their place between
+  Neptune and Proxima.  The three loop fields the body needed
+  (almanac.pluto.az, .alt and .earth_distance) are no longer declared,
+  so every packet on every station carries three fields fewer -- the
+  skin's own skin.conf is replaced on upgrade, so nothing need be typed
+  anywhere.  Pluto stays a reserved tag: every almanac still serves
+  almanac.pluto.*, so a satellite or comet may still not be named after
+  it, and a page of your own may still read those fields by declaring
+  them itself.  A skin that pasted this page's field declaration into
+  its own skin.conf keeps a dead pluto group until it deletes the line;
+  nothing breaks meanwhile.  The sample screenshot is recaptured.
+
+- FIXED: a panel on the night plate inside a page on the light plate
+  wore paper paint on eight of its marks -- the moon's lit limb, dark
+  limb and rim, the sun's and Venus's dial rings, and an inset ring on
+  the sun, moon and Venus roster chips that only the paper plate is
+  meant to wear.  Eleven rules wrote those treatments as
+  `.theme-light .cel-...`, and a descendant selector matches on ancestry
+  alone, so the page won however close the panel sat; the custom
+  properties in the same stylesheet were always right, because a custom
+  property resolves from the nearest ancestor that sets it, and that
+  difference is what kept this out of sight.  The three treatments are
+  tokens now, declared once per plate, so a panel carrying its own theme
+  class answers for its own marks.  The bundled page never showed this
+  -- its panels are always on the page's own plate -- but a skin
+  embedding a night panel in a light page did, which is what a viewer's
+  light/dark switch makes of one.
+
+- The manual's and the README's two shadow-entry animations are
+  recaptured.  The old pair was shot 2026-08-10, before weewx-skyfield
+  2.2, so its charts carry neither the altitude rings nor the meridian
+  cross -- under a caption, a few lines above one of them, telling the
+  reader that the rings mark 30 and 60 degrees.  The new pair is
+  Tiangong's pass of the evening of September 8: it appears in the
+  west-northwest, peaks at 59 degrees to the north-northeast and winks
+  out at 49 as it crosses into the earth's shadow, high enough that the
+  sweep dot's solid-to-ring flip reads plainly -- which is what the old
+  pre-dawn NOAA-21 pass, entering shadow at 48, was there to show.  Both
+  halves are the live 9.1 page on a station running weewx-skyfield 2.4,
+  so they are also the first picture of the new flip.  The old files stay
+  where they are: the published 8.0 and 8.1 release pages embed them by
+  name.
+
+- The Next Visible Pass chart's sweeping dot goes on flipping between
+  its sunlit and in-shadow looks on weewx-skyfield 2.4.  2.4 moves the
+  charts' colors out of the markup and into role classes, so that an
+  embedding skin can restyle them; this page had been reading the dot's
+  drawn fill and stroke ATTRIBUTES to learn its two looks, and on 2.4
+  there are none to read.  It now exchanges the two role classes
+  instead, which is the same idea in the form 2.4 uses, and still needs
+  no knowledge of skyfield's palette -- so the dot's colors remain the
+  station's own, and a skin restyling those classes reaches this mark
+  along with every other one on the chart.  The 2.3.x branch that swapped
+  the attributes is gone with the versions it served: a chart that carries
+  no role classes leaves its dot standing as drawn, which is what an older
+  weewx-skyfield now gets and why the installer refuses one.  Without this
+  the dot on a 2.4 station would have stood as drawn through every pass
+  instead of going hollow when the satellite entered the earth's shadow.
+  Nothing else about 2.4 needs anything from this page: a dome or pass
+  chart drawn on one plate inside a page of the other still renders in
+  its own colors, which is now pinned by a test rather than left to the
+  old markup's accident.
+
 9.0.1 2026/08/31
 ----------------
 - FIXED: the LIVE badge's age is read from the serving machine's own
@@ -505,7 +588,7 @@ weewx-celestial change history
 - The manual's countdown GIF is recaptured.  The old one was shot under
   8.1, when the chips ticked once a second; since 8.3.5 they step with
   each loop packet, so the caption had grown a paragraph of apology.
-  The new capture is 8.3.5's behaviour, rolling through a real sunset:
+  The new capture is 8.3.5's behavior, rolling through a real sunset:
   the chip counts to zero and turns into the next sunrise.
 - A station whose console clock runs fast is no longer accused of
   writing no backdrops.  Its archive records are stamped ahead of its
@@ -623,7 +706,7 @@ weewx-celestial change history
   arc, the header and the rest of the chart stand until the next chart
   replaces them.  On an older weewx-skyfield the chart carries no times
   of its own and the page falls back to the feed's window and 8.3.2's
-  judgement of it -- the dot returns to its drawn place at set (its name
+  judgment of it -- the dot returns to its drawn place at set (its name
   label now leaves with it when the dot dips below the rim, which 8.3.2
   left standing).  Found in a live capture of NOAA-21's
   2026-08-15 pass, at the 02:58:35 set instant exactly.
@@ -913,7 +996,7 @@ weewx-celestial change history
   the dial's conventions and the comet vocabulary, the dome's marker
   states, and the fact that the dial faces east-RIGHT while the dome
   faces east-LEFT, deliberately, because a plan view and a view of the
-  sky disagree about east.  "Troubleshooting" catalogues fifteen
+  sky disagree about east.  "Troubleshooting" catalogs fifteen
   symptoms, each with the command that confirms it.  "How the page
   stays live" explains the three clocks behind the page for anyone
   deciding how much to trust a moving number.  "Fields reference" is
@@ -1555,7 +1638,7 @@ upgrade instructions.
   the sub-second copy window; the running engine is now immune to the file
   changing (or vanishing) underneath it.  Costs about 16 MB of resident
   memory.
-- The Hipparcos star data licence is now documented: ESA distributes the
+- The Hipparcos star data license is now documented: ESA distributes the
   Hipparcos and Tycho Catalogues under CC BY-NC 3.0 IGO, and the README,
   celestial_stars.dat and the sample skin's footer now carry the required
   "Credit: ESA" acknowledgment.

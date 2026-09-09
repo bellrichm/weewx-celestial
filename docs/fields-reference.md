@@ -28,7 +28,7 @@ reads it by that exact key.  The full grammar is in
 The page declares what it reads in two places, and you do not normally
 type any of it:
 
-- **The fields that never change** — the clock, the eleven bodies, the
+- **The fields that never change** — the clock, the ten bodies, the
   countdown events — ship in the skin's own `skin.conf`, as a
   `[LoopData] [[fields]]` section of named groups (the names are the
   handles the merge below works by; ConfigObj has no line continuation
@@ -73,7 +73,7 @@ fields to it.
 
 ## What the page reads
 
-The skin consumes exactly 100 entries with the installer's default two
+The skin consumes exactly 97 entries with the installer's default two
 satellites and two comets.  They fall into six kinds.
 
 ### The clock (1 entry)
@@ -85,9 +85,9 @@ derived from consecutive stamps, the `LIVE` badge measures its age
 against the serving machine's clock, and a record without it is dropped
 whole (see [Whose time it is](how-it-stays-live.md#whose-time-it-is)).
 
-### Body positions (33 entries)
+### Body positions (30 entries)
 
-Three entries — `az`, `alt`, `earth_distance` — for each of the eleven
+Three entries — `az`, `alt`, `earth_distance` — for each of the ten
 bodies on the Geocentric dial:
 
 ```
@@ -95,7 +95,7 @@ almanac.<body>.az, almanac.<body>.alt, almanac.<body>.earth_distance
 ```
 
 for `sun`, `moon`, `mercury`, `venus`, `mars`, `jupiter`, `saturn`,
-`uranus`, `neptune`, `pluto` and `proxima_centauri`.
+`uranus`, `neptune` and `proxima_centauri`.
 
 Distances arrive as **raw astronomical units**; the page converts them
 for display.  `proxima_centauri` needs weewx-skyfield — PyEphem's star
@@ -189,8 +189,8 @@ installer-written groups follow the panels its report names in
 | Panel | Groups pasted from the skin's declaration | Written by the installer |
 |---|---|---|
 | The countdown row | `clock`, `sunset`, `darkness`, `season`, `perihelion`, `meteor_shower`, `supermoon`, `eclipse` | `satellites` (the pass chip), `comets` (the perihelion chips) |
-| The Geocentric | `clock`, the eleven body groups (`sun` … `proxima_centauri`) | `comets` |
-| The sky dome | `clock`, the eleven body groups — the marks it nudges between backdrops are the sun, the moon and the planets | `satellites` |
+| The Geocentric | `clock`, the ten body groups (`sun` … `proxima_centauri`) | `comets` |
+| The sky dome | `clock`, the ten body groups — the marks it nudges between backdrops are the sun, the moon and the planets | `satellites` |
 | The Next Visible Pass | `clock` | `satellites` |
 
 `clock` is not optional anywhere: `current.dateTime.raw` is the page's
@@ -217,7 +217,7 @@ almanac that can serve them: the layer stays hidden until it can.
 ## The shipped declaration
 
 `skins/Celestial/skin.conf`'s `[LoopData]` section, as shipped — the
-fifty fields that do not depend on your configuration:
+forty-seven fields that do not depend on your configuration:
 
 ```
 [LoopData]
@@ -239,7 +239,6 @@ fifty fields that do not depend on your configuration:
         saturn = almanac.saturn.az, almanac.saturn.alt, almanac.saturn.earth_distance
         uranus = almanac.uranus.az, almanac.uranus.alt, almanac.uranus.earth_distance
         neptune = almanac.neptune.az, almanac.neptune.alt, almanac.neptune.earth_distance
-        pluto = almanac.pluto.az, almanac.pluto.alt, almanac.pluto.earth_distance
         proxima_centauri = almanac.proxima_centauri.az, almanac.proxima_centauri.alt, almanac.proxima_centauri.earth_distance
         # The countdown row: each chip is client-side arithmetic against
         # one of these event instants, pinned to epoch seconds

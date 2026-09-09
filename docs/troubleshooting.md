@@ -250,8 +250,8 @@ degrades on purpose rather than failing:
 |---|---|
 | The Geocentric shows a hint | Neither weewx-skyfield nor PyEphem is registered — the built-in almanac serves none of the positions the Celestial page needs |
 | The dome shows a hint | weewx-skyfield is not installed or not registered |
-| The dome draws, but no satellites | weewx-skyfield is older than 2.0, or no `[Skyfield] [[Satellites]]` are configured |
-| No comets on the dial | weewx-skyfield is older than 2.1, or no `[[Comets]]` are configured |
+| The dome draws, but no satellites | No `[Skyfield] [[Satellites]]` are configured |
+| No comets on the dial | No `[Skyfield] [[Comets]]` are configured |
 | The Proxima Centauri row is empty | PyEphem is serving the page; its star catalog lacks Proxima |
 | The dome says *could not be drawn — see the weewxd log* | Different from the hint above: weewx-skyfield **is** registered, and its drawing came back empty anyway.  The log says why — that is the only place the reason exists |
 
@@ -296,9 +296,9 @@ Three different causes, in the order worth checking:
    [Fields reference](fields-reference.md) — every chip's field ships
    declared in the skin, so a missing key means loopdata has not read
    the declaration (restart weewxd) or cannot compute it (next).
-2. **The almanac cannot compute it.**  weewx-skyfield 2.1 is what serves
-   the meteor shower and supermoon chips; older versions simply omit
-   them, one log line per field at startup.
+2. **The almanac cannot compute it.**  The meteor shower and supermoon
+   chips come from weewx-skyfield; on PyEphem or the built-in almanac
+   they are simply omitted, one log line per field at startup.
 3. **The event is more than 30 days out.**  The equinox/solstice,
    perihelion/aphelion, supermoon, eclipse and comet-perihelion chips are
    windowed guests by design.

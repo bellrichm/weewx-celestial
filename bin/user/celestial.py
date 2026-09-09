@@ -35,7 +35,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '9.0.1'
+CELESTIAL_VERSION = '9.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -81,7 +81,7 @@ if _weewx_version is not None and _weewx_version < (5, 2):
 # ===============================================================================
 
 _PLANETS: List[str] = ['mercury', 'venus', 'mars', 'jupiter',
-                       'saturn', 'uranus', 'neptune', 'pluto']
+                       'saturn', 'uranus', 'neptune']
 
 # The fields the sample report reads.  Per body: az places the dial dot,
 # alt decides above/below-horizon rendering, earth_distance (raw AU)
@@ -105,7 +105,6 @@ PAGE_FIELDS: List[str] = [
     'almanac.saturn.az', 'almanac.saturn.alt', 'almanac.saturn.earth_distance',
     'almanac.uranus.az', 'almanac.uranus.alt', 'almanac.uranus.earth_distance',
     'almanac.neptune.az', 'almanac.neptune.alt', 'almanac.neptune.earth_distance',
-    'almanac.pluto.az', 'almanac.pluto.alt', 'almanac.pluto.earth_distance',
     'almanac.proxima_centauri.az', 'almanac.proxima_centauri.alt',
     'almanac.proxima_centauri.earth_distance',
     # The countdown row (8.1): every chip is client-side arithmetic
@@ -384,7 +383,7 @@ def skin_conf_path(config: Any, report: str) -> Optional[str]:
     GLOBAL [StdReport] SKIN_ROOT: WeeWX ignores a SKIN_ROOT set on an
     individual report (weewx.reportengine builds the path from
     config_dict['StdReport']['SKIN_ROOT'] and that report's skin), so
-    honouring a per-report one here would have this extension reading a
+    honoring a per-report one here would have this extension reading a
     different file than WeeWX does, and the two would disagree in
     silence about where a report's options come from."""
     section = _report_section(config, report)
@@ -1032,8 +1031,11 @@ _TAG_RE = re.compile(r'[a-z][a-z0-9_]*$')
 # namespace, so each family also refuses the other family's configured
 # tags and installer defaults (checked in add_satellite/add_comet, where
 # the configuration is in hand).
+# Pluto is reserved though the page no longer draws it (9.1): every
+# almanac still serves almanac.pluto.*, so a satellite or comet tagged
+# pluto would still collide in the report tags and the loop fields.
 _RESERVED_TAGS = frozenset(
-    ['sun', 'moon', 'earth', 'proxima_centauri'] + _PLANETS)
+    ['sun', 'moon', 'earth', 'proxima_centauri', 'pluto'] + _PLANETS)
 
 # An MPC comet designation: numbered periodic (1P, 220P) or provisional
 # (C/2023 A3, C/1995 O1), an optional fragment suffix on either

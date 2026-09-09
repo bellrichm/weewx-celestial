@@ -131,7 +131,7 @@ comet called `iss`.
 A configured satellite gets a live marker on the sky dome, a row in each
 of the two satellite rosters, and a share of the pass countdown chip.  A
 configured comet gets a diamond and tail on the Geocentric dial, a roster
-row between Pluto and Proxima, and a windowed perihelion chip.  What each
+row between Neptune and Proxima, and a windowed perihelion chip.  What each
 mark's shape and brightness mean is in
 [Reading the page](reading-the-page.md).
 

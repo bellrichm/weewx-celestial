@@ -31,9 +31,11 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import time
 import types
+import unittest
 
 import pytest
 
@@ -164,6 +166,47 @@ def load_wxskyfield():
     pytest.skip('the weewx-skyfield extension is not available')
 
 
+def as_sunlit_at_generation(html):
+    """The pass chart's featured dot as skyfield draws a satellite that is
+    SUNLIT at culmination -- the normal case for a visible pass, and the
+    one the suite's fixture (which culminates in shadow) does not cover.
+
+    On weewx-skyfield 2.4 the dot becomes `sky-fill-brass
+    sky-stroke-halo` and the page inverts it by exchanging the two
+    suffixes.  On 2.3.x the dot is painted with attributes and there is
+    no style block.
+
+    This fixture CANNOT prove the exchange resolves: it derives a sunlit
+    chart from a shadowed one, so the style block keeps every role the
+    original markup used and the swapped class is always defined.  What
+    makes the exchange safe on a chart skyfield really drew is
+    `_style_block` emitting each used role's PARTNER, and that is pinned
+    against the sibling directly by
+    `test_skyfield_emits_partner_defaults`.
+    """
+    m = re.search(r'(<g class="dome-body" data-body="[^"]+" data-sunlit=")0(">)'
+                  r'(<circle[^>]*>)', html)
+    assert m is not None, 'no shadowed featured dot to invert'
+    circle = m.group(3)
+    cls = re.search(r'class="([^"]*)"', circle)
+    if cls is not None and 'sky-fill-' in cls.group(1):
+        toks = cls.group(1).split()
+        fill = next(t[len('sky-fill-'):] for t in toks if t.startswith('sky-fill-'))
+        stroke = next(t[len('sky-stroke-'):] for t in toks if t.startswith('sky-stroke-'))
+        swapped = ['sky-fill-' + stroke if t.startswith('sky-fill-')
+                   else 'sky-stroke-' + fill if t.startswith('sky-stroke-')
+                   else t for t in toks]
+        new_circle = circle.replace(cls.group(0), 'class="%s"' % ' '.join(swapped))
+    else:
+        f = re.search(r'fill="([^"]+)"', circle)
+        s = re.search(r'stroke="([^"]+)"', circle)
+        assert f is not None and s is not None, circle
+        new_circle = (circle.replace(f.group(0), 'fill="\x00"')
+                            .replace(s.group(0), 'stroke="%s"' % f.group(1))
+                            .replace('fill="\x00"', 'fill="%s"' % s.group(1)))
+    return html.replace(m.group(0), m.group(1) + '1' + m.group(2) + new_circle, 1)
+
+
 def sat_feed_packets(wall, report=REPORT_NAME, satellites=True):
     """Three loop-data files, 2 s apart, as weewx-loopdata writes them for
     a page (under `report`'s name) with the ISS and Tiangong configured: every body's
@@ -175,7 +218,7 @@ def sat_feed_packets(wall, report=REPORT_NAME, satellites=True):
     a real station's feed and the machine reading it agree on the time,
     and a feed a year stale is one the page rightly treats as dead."""
     bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-              'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+              'saturn', 'uranus', 'neptune', 'proxima_centauri']
     packets = []
     for i, ts in enumerate((TIME_TS, TIME_TS + 2, TIME_TS + 4)):
         alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
@@ -642,7 +685,7 @@ class TestSampleSkinRenders:
         # grouped miles (the render passes US units), raw AU and altitude
         # on the sub-line -- for every body including Proxima Centauri.
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.moon.earth_distance'))
-        assert re.match(r'[\d,]+$', self.cell(html, 'almanac.pluto.earth_distance'))
+        assert re.match(r'[\d,]+$', self.cell(html, 'almanac.neptune.earth_distance'))
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.proxima_centauri.earth_distance'))
         assert self.cell(html, 'geo-au-moon').endswith(' au')
         assert self.cell(html, 'geo-au-proxima_centauri').endswith(' au')
@@ -651,7 +694,7 @@ class TestSampleSkinRenders:
         # Every row rendered; each altitude cell is filled one way or the
         # other.
         for body in ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter',
-                     'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri'):
+                     'saturn', 'uranus', 'neptune', 'proxima_centauri'):
             assert 'id="geo-row-%s"' % body in html
             alt_cell = self.cell(html, 'geo-alt-%s' % body)
             assert alt_cell.startswith('alt ') or alt_cell == 'below horizon', body
@@ -772,8 +815,16 @@ class TestSampleSkinRenders:
         assert 'Jun 22' in when.group(1)
         assert '03:11' in when.group(1) and '03:21' in when.group(1)
         assert '19' in when.group(1)
-        assert 'id="skygp"' in html and 'id="domecp"' in html
-        assert 'id="skyg"' in html and 'id="domec"' in html
+        # Both panels carry their own gradient and clip ids: the pass
+        # chart's skygp/domecp and the dome's skyg/domec.  weewx-skyfield
+        # 2.4 suffixes them with the plate name (skyg-night,
+        # domecp-light) because an id is global to the HTML document and
+        # two charts of different plates on one page collided over
+        # url(#skyg) -- so the suffix is optional here rather than
+        # pinned either way.  Nothing in this skin reaches for these ids;
+        # the assertion is that each panel brought its own defs.
+        for ident in ('skygp', 'domecp', 'skyg', 'domec'):
+            assert re.search(r'id="%s(-[a-z]+)?"' % ident, html), ident
 
     def test_pass_row_day_count_is_calendar_days(self, wxskyfield_sat_sky):
         """A pass row's whole-day countdown stands on the same line as the
@@ -829,8 +880,8 @@ class TestSampleSkinRenders:
             assert re.search(r'id="chip-peri-%s" data-ts="\d+" hidden' % comet,
                              html)
         # The roster reads nearest-tier outward: comets sit between
-        # Pluto and the stellar rim, never past Proxima.
-        assert (html.index('id="geo-row-pluto"')
+        # Neptune and the stellar rim, never past Proxima.
+        assert (html.index('id="geo-row-neptune"')
                 < html.index('id="geo-row-halley"')
                 < html.index('id="geo-row-mcnaught"')
                 < html.index('id="geo-row-proxima_centauri"'))
@@ -900,7 +951,11 @@ class TestSampleSkinRenders:
         # the June fixture instant -- active_meteor_showers is empty.)
         assert 'data-body="halley" data-bright="0"' in html
         assert 'data-body="bright" data-bright="1"' in html
-        assert 'class="comet-tail"' in html
+        # The tail rays: `class="comet-tail"` through skyfield 2.3.x,
+        # `class="comet-tail sky-stroke-<role>"` from 2.4, which moved the
+        # colors out of the markup into role classes.  Either way the
+        # comet-tail class itself is the contract.
+        assert re.search(r'class="comet-tail( [^"]*)?"', html)
 
     def test_comet_absence_renders_absence(self):
         """An elementless comet (MPC drops faded ones) serves None across
@@ -1837,7 +1892,7 @@ class TestSampleSkinRenders:
         m = re.search(r'var GEO_BODIES = \[(.*?)\];', include, re.DOTALL)
         assert m is not None
         bodies = re.findall(r"'([a-z_]+)'", m.group(1))
-        assert len(bodies) == 11
+        assert len(bodies) == 10
         keys = set()
         for body in bodies:
             for suffix in ('.az', '.alt', '.earth_distance'):
@@ -2082,7 +2137,7 @@ class TestSampleSkinRenders:
         assert out['errors'] == []
         assert 'receding' in out['rate'] or 'approaching' in out['rate']
         assert out['dots'] >= 9            # sun + planets drawn (moon is a group)
-        assert out['trails'] > 200         # 24 segments x 11 bodies, visible
+        assert out['trails'] > 180         # 24 segments x 10 bodies, visible
         assert served['n'] >= 2            # the page really polled repeatedly
         # The dome came up live: the embedded backdrop is present, the
         # above-horizon marks picked up nudge transforms (the sun is up at
@@ -2397,8 +2452,9 @@ class TestSampleSkinRenders:
         assert out['dial_title'] == 'Mars · alt 30.0° · 1.660000 au'
         assert out['dial_chip'] == {'shown': True, 'text': out['dial_title']}
 
+    @pytest.mark.parametrize('gen_lit', [False, True])
     def test_pass_sweep_dot_flips_sunlit_in_a_real_browser(
-            self, wxskyfield_sat_almanac, tmp_path):
+            self, wxskyfield_sat_almanac, tmp_path, gen_lit):
         """The 8.1 fix for the 8.0 ship-review finding: mid-pass the
         chart's sweeping dot wears the satellite's LIVE sunlit state --
         solid dot vs hollow in-shadow ring, the dome marker's own toggle
@@ -2439,6 +2495,13 @@ class TestSampleSkinRenders:
         # the browser's clock like the feed's window below.
         html = rewindow_pass_chart(html, int(time.time()) - 60,
                                    int(time.time()) + 600)
+        if gen_lit:
+            # The fixture culminates in SHADOW, so its swap lands on role
+            # classes the chart already used -- the one direction that
+            # cannot expose a missing default.  A visible pass is
+            # normally sunlit at culmination; this leg builds that chart
+            # the way skyfield builds it, pruned rules and all.
+            html = as_sunlit_at_generation(html)
         (tmp_path / 'index.html').write_text(html)
         write_assets(tmp_path)
 
@@ -2450,14 +2513,18 @@ class TestSampleSkinRenders:
         # exactly, so the generated dot is the ring and the live-sunlit
         # phases below flip it solid.
         m = relib.search(r'<g class="dome-body" data-body="iss" data-sunlit="(\d)">'
-                         r'<circle[^>]*fill="([^"]+)" stroke="([^"]+)"', html)
+                         r'<circle([^>]*)>', html)
         assert m is not None
-        gen_sunlit, gen_fill, gen_stroke = m.group(1), m.group(2), m.group(3)
-        assert gen_sunlit == '0'
-        # Each live state's expected look, relative to the generated pair:
-        # the shadowed look is always the exact inversion of the sunlit one.
-        shadow_fill, shadow_stroke = gen_fill, gen_stroke
-        lit_fill, lit_stroke = gen_stroke, gen_fill
+        gen_sunlit = m.group(1)
+        assert gen_sunlit == ('1' if gen_lit else '0')
+        # The looks are not named here.  The page derives them from the
+        # colors the chart is DRAWN in, which since skyfield 2.4 come
+        # from role classes rather than from the markup, so the runner
+        # below reads the computed pair in each live phase and the
+        # assertion is that they are each other's exact inversion.  That
+        # holds whichever skyfield drew the chart, needs no knowledge of
+        # its palette, and -- unlike naming the classes -- fails loudly
+        # if either phase resolves to the SVG default black.
 
         # Five packets, one per 2 s poll: the pass in progress around the
         # browser's real clock, sunlit walking true -> false -> true (the
@@ -2518,30 +2585,32 @@ class TestSampleSkinRenders:
             '    # The sweep engaged: the feed put the pass in progress.\n'
             "    page.wait_for_selector('#pass-chart g.dome-body[transform]',\n"
             '                           timeout=15000)\n'
-            '    # The shadow packets: chart dot ringed, dome dot ringed --\n'
-            '    # the two panels agreeing is the point of the fix.\n'
-            '    page.wait_for_function("""() => {\n'
+            '    # The shadow packets: dome dot ringed -- the two panels\n'
+            '    # agreeing is the point of the fix -- then the chart dot\n'
+            '    # pair as the browser RESOLVES it, whatever painted it.\n'
+            '    page.wait_for_function("""() => '
+            "document.querySelector('#dome-svg .cel-satdot.cel-shadow') !== null"
+            '""", timeout=20000)\n'
+            '    shadow = page.evaluate("""() => {\n'
             "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
-            "      return c !== null && c.getAttribute('fill') === '%(sfill)s' &&\n"
-            "             c.getAttribute('stroke') === '%(sstroke)s' &&\n"
-            "             document.querySelector('#dome-svg .cel-satdot.cel-shadow') !== null;\n"
-            '    }""", timeout=20000)\n'
-            '    # Sunlit returns: the chart dot flips to the inversion of its\n'
-            '    # generated shadow look, in step with the dome, mid-sweep.\n'
-            '    page.wait_for_function("""() => {\n'
+            '      var s = getComputedStyle(c); return [s.fill, s.stroke];\n'
+            '    }""")\n'
+            '    # Sunlit returns: the chart dot flips back, in step with the\n'
+            '    # dome, mid-sweep.\n'
+            '    page.wait_for_function("""() => '
+            "document.querySelector('#dome-svg .cel-satdot') !== null && "
+            "document.querySelector('#dome-svg .cel-satdot.cel-shadow') === null"
+            '""", timeout=20000)\n'
+            '    lit = page.evaluate("""() => {\n'
             "      var c = document.querySelector('#pass-chart g.dome-body[data-body=iss] circle');\n"
-            "      return c !== null && c.getAttribute('fill') === '%(lfill)s' &&\n"
-            "             c.getAttribute('stroke') === '%(lstroke)s' &&\n"
-            "             document.querySelector('#dome-svg .cel-satdot') !== null &&\n"
-            "             document.querySelector('#dome-svg .cel-satdot.cel-shadow') === null;\n"
-            '    }""", timeout=20000)\n'
-            "    out = {'errors': errors,\n"
+            '      var s = getComputedStyle(c); return [s.fill, s.stroke];\n'
+            '    }""")\n'
+            "    out = {'errors': errors, 'shadow': shadow, 'lit': lit,\n"
             "           'swept': page.eval_on_selector_all(\n"
             "               '#pass-chart g.dome-body[transform]', 'els => els.length')}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n'
-            % {'port': port, 'sfill': shadow_fill, 'sstroke': shadow_stroke,
-               'lfill': lit_fill, 'lstroke': lit_stroke})
+            % {'port': port})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -2550,6 +2619,15 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
+        # The two live looks are each other's exact inversion -- the
+        # generator's own rule for a shadowed satellite -- and neither is
+        # the SVG default black, which is what a mark painted by a class
+        # the chart never defined a rule for would resolve to.  On the
+        # night plate halo is nearly black, so an equality alone would
+        # pass on that plate while the light plate showed a solid black
+        # disc where a hollow white ring belongs.
+        assert out['shadow'] == [out['lit'][1], out['lit'][0]], (out['shadow'], out['lit'])
+        assert 'rgb(0, 0, 0)' not in out['shadow'] + out['lit'], out
         assert out['swept'] == 1           # still mid-pass at the final sample
         assert served['n'] >= 5            # every phase of the walk was served
 
@@ -3222,7 +3300,7 @@ class TestSampleSkinRenders:
         hardest case: weewx-loopdata stops writing while the web server
         goes on serving the last file, so every poll is a 200 carrying
         identical json.  Nothing fails.  The station's clock inside those
-        packets stops, which also stops the backdrop-age judgement that
+        packets stops, which also stops the backdrop-age judgment that
         reads it -- so unless the page notices that a repeat is not news,
         both of its restore paths are dead at once and the dome is left
         showing a current star field wearing hour-old bodies.
@@ -4947,7 +5025,7 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-                  'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+                  'saturn', 'uranus', 'neptune', 'proxima_centauri']
         packets = []
         for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
             alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
@@ -5027,7 +5105,7 @@ class TestSampleSkinRenders:
             "        var d = g.querySelector('path').getAttribute('d');\n"
             "        var m = /M ([\\\\d.-]+),([\\\\d.-]+)/.exec(d);\n"
             '        var cx0 = parseFloat(m[1]), cy0 = parseFloat(m[2]) + 5.0;\n'
-            "        var rays = g.querySelectorAll('line.comet-tail');\n"
+            "        var rays = g.querySelectorAll('line.cel-comet-tail');\n"
             "        var r = rays[1];\n"
             "        var vx = parseFloat(r.getAttribute('x2')) - parseFloat(r.getAttribute('x1'));\n"
             "        var vy = parseFloat(r.getAttribute('y2')) - parseFloat(r.getAttribute('y1'));\n"
@@ -5051,7 +5129,7 @@ class TestSampleSkinRenders:
             "        'shown': page.eval_on_selector_all(\n"
             '            \'#dial g.cel-geocomet:not([display="none"])\', "els => els.length"),\n'
             "        'rays': page.eval_on_selector_all(\n"
-            '            \'#dial line.comet-tail:not([display="none"])\', "els => els.length"),\n'
+            '            \'#dial line.cel-comet-tail:not([display="none"])\', "els => els.length"),\n'
             "        'trails': page.eval_on_selector_all(\n"
             '            \'#dial line.cel-trail.cel-stroke-comet:not([display="none"])\', "els => els.length"),\n'
             "        'tail_ok': tail_ok,\n"
@@ -5247,6 +5325,55 @@ class TestSampleSkinRenders:
         assert re.search(r'var CHIP_WINDOW_SEC = 30 \* 86400;', js)
         assert celestial_page.CHIP_WINDOW_S == 30 * 86400
 
+    def test_skyfield_emits_partner_defaults(self):
+        """The pass dot's flip rests on a weewx-skyfield behavior, and
+        this is the pin for it.
+
+        The page inverts the dot by exchanging its `sky-fill-<role>` /
+        `sky-stroke-<role>` suffixes (passDotLit, via skyPairSwap).  That
+        only resolves because skyfield's `_style_block` emits a default
+        for every role a chart uses AND for that role's partner in the
+        other paint channel.  Without the partner the swapped class names
+        a rule that does not exist and the mark falls back to the SVG
+        initial black -- which merely looks right on the night plate,
+        whose halo is nearly black, and inverts a hollow white ring into
+        a solid black disc on the light one.  2.4 was in exactly that
+        state for a few hours on 2026-09-08.
+
+        The flip tests cannot catch this: their fixture derives a sunlit
+        chart from a shadowed one, so the style block keeps every role
+        the original markup used and the swapped class is always
+        defined.  Only a chart skyfield drew from scratch can be missing
+        one, so this asks the sibling's own code.  Skips when no
+        weewx-skyfield source is available.  It does NOT skip on 2.3.x:
+        9.1 is pinned to 2.4, so meeting an older one is a failure to
+        report rather than a configuration to tolerate.
+        """
+        sky_py = None
+        for d in WXSKYFIELD_DIRS:
+            candidate = os.path.join(d, 'wxskyfield_sky.py')
+            if os.path.exists(candidate):
+                sky_py = candidate
+                break
+        if sky_py is None:
+            pytest.skip('no weewx-skyfield source is available')
+        with open(sky_py, encoding='utf-8') as f:
+            src = f.read()
+        assert '_style_block' in src, (
+            'this weewx-skyfield predates 2.4 and paints with attributes; '
+            '9.1 is pinned to 2.4')
+        # Read it out of the code rather than off a rendered chart: a
+        # chart only shows the partner when some role happens to need
+        # one, which is the very accident this guards against.
+        assert '_partner' in src, (
+            'weewx-skyfield no longer pairs its role defaults; celestial.js '
+            'exchanges the sky-fill-/sky-stroke- suffixes and would paint '
+            'the in-shadow pass dot the SVG initial black')
+        block = re.search(r'def _style_block\(.*?(?=\ndef )', src, re.S)
+        assert block is not None, 'could not find _style_block'
+        assert '_partner' in block.group(0), (
+            '_partner exists but _style_block no longer uses it')
+
     def test_sky_js_and_skytip_in_step_with_skyfield(self):
         """sky.js is COPIED from weewx-skyfield -- that repo is the source
         of truth, celestial re-copies on upgrade and never forks -- and the
@@ -5374,7 +5501,7 @@ class TestSampleSkinRenders:
             else:
                 assert light_token(tok) == light_color(key), tok
         for body in ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-                     'saturn', 'uranus', 'neptune', 'pluto'):
+                     'saturn', 'uranus', 'neptune'):
             assert light_token('c-' + body) == light_color(body, 'body'), body
         # Earth is the documented exception (John's call, 8.3): skyfield
         # draws it only in its orrery, a panel this page does not embed,
@@ -5397,13 +5524,26 @@ class TestSampleSkinRenders:
             assert light_token('e-' + body) == light_color(body, 'ring'), body
         assert light_token('c-proxima') == light_color('moon', 'ring')
 
-        def light_rule_fill(css, cls):
-            m = re.search(r'.theme-light \.cel-%s\{([^}]*)\}' % cls, css)
-            assert m is not None, cls
-            fill = re.search(r'fill:\s*(#[0-9A-Fa-f]{6}|var\(--[a-z]+\))',
-                             m.group(1))
-            assert fill is not None, cls
-            return fill.group(1).upper()
+        def light_plate_token(css, name):
+            # The moon's disc and its rim are a TREATMENT that differs in
+            # kind between the plates, so 9.1 carries them as tokens
+            # declared once per plate rather than as
+            # `.theme-light .cel-x` rules -- a descendant selector matches
+            # on ancestry alone, so those rules painted a night panel
+            # inside a light page with paper values.  Read the paper
+            # plate's declaration, following one level of indirection.
+            block = re.search(r'^\.theme-light[^{\n]*\{(.*?)\n\}',
+                              css, re.S | re.M)
+            assert block is not None, 'the light theme block is gone'
+            value = re.search(r'--%s:\s*([^;]+)' % name, block.group(1))
+            assert value is not None, name
+            value = value.group(1).strip()
+            if value.startswith('var('):
+                inner = re.search(r'--%s:\s*([^;]+)' % value[6:-1],
+                                  block.group(1))
+                assert inner is not None, value
+                value = inner.group(1).strip()
+            return value.upper()
 
         # celestial writes the three chart-label fills as tokens (one rule
         # per class, scoped by plate for a fragment on the other plate
@@ -5434,11 +5574,9 @@ class TestSampleSkinRenders:
                 assert plate_fill(cel_css, cls, plate) == plate_fill(sky_css, cls, plate), (cls, plate)
         # The moon's disc: skyfield's own paper values, including the ring
         # that is all that draws a disc whose lit limb is nearly the page.
-        for cls, key in (('moon-dark', 'moon_dark'), ('moon-lit', 'moon_lit')):
-            assert light_rule_fill(cel_css, cls) == light_color(key), cls
-        rim = re.search(r'.theme-light \.cel-moon-rim\{([^}]*)\}', cel_css)
-        assert rim is not None
-        assert light_color('moon_ring') in rim.group(1).upper()
+        for tok, key in (('moon-dark', 'moon_dark'), ('moon-lit', 'moon_lit')):
+            assert light_plate_token(cel_css, tok) == light_color(key), tok
+        assert light_plate_token(cel_css, 'moon-rim') == light_color('moon_ring')
 
     def test_dome_labels_carry_an_inline_font_size(self, wxskyfield_almanac):
         """Every label weewx-skyfield draws in a fragment sizes itself
@@ -5465,8 +5603,8 @@ class TestSampleSkinRenders:
             'sky_page': make_sky_page(),
         })
         assert '<svg' in out
-        labelled = re.findall(r'<text[^>]*class="([^"]*)"[^>]*>', out)
-        assert labelled, 'no labels in the fragment at all'
+        labeled = re.findall(r'<text[^>]*class="([^"]*)"[^>]*>', out)
+        assert labeled, 'no labels in the fragment at all'
         bare = [t for t in re.findall(r'<text[^>]*>', out)
                 if 'font-size' not in t]
         assert bare == [], (
@@ -5489,7 +5627,7 @@ class TestSampleSkinRenders:
             assert alm.hasExtras
             html = self.render(alm)
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.moon.earth_distance'))
-        assert re.match(r'[\d,]+$', self.cell(html, 'almanac.pluto.earth_distance'))
+        assert re.match(r'[\d,]+$', self.cell(html, 'almanac.neptune.earth_distance'))
         assert self.cell(html, 'geo-alt-sun').startswith('alt ')
         # Proxima: PyEphem cannot serve it; the guarded cells render empty
         # (the row itself stays, for the javascript).
@@ -5522,7 +5660,7 @@ class TestSampleSkinRenders:
             # auto-detect the station machine's zone (/etc/localtime
             # symlink, /etc/timezone fallback).
             html = self.render(plain, with_time_zone=False)
-        for body in ('moon', 'sun', 'pluto', 'proxima_centauri'):
+        for body in ('moon', 'sun', 'neptune', 'proxima_centauri'):
             assert self.cell(html, 'almanac.%s.earth_distance' % body) == '', body
             assert self.cell(html, 'geo-alt-%s' % body) == '', body
         # Two install hints: the Geocentric's (no extended almanac at all)
@@ -7878,6 +8016,178 @@ class TestPanels:
             assert out[name] == [w['cardinal'], w['skylab'], w['cardinal'], w['skylab'],
                                  w['head']], (name, out[name])
 
+    def test_a_night_panel_keeps_its_plate_inside_a_light_page(self, tmp_path):
+        """A panel carrying `theme-dark` inside a page carrying
+        `theme-light` renders entirely in night values.
+
+        This is the island case, and it is the shape a consumer actually
+        builds: the page must carry `theme-light` to be light at all
+        (bare `:root` IS the night palette), so a viewer's light switch
+        writes that class over a night panel.
+
+        Through 9.0 eleven rules wrote the paper treatments as
+        `.theme-light .cel-x`, and a descendant selector matches on
+        ANCESTRY ALONE -- proximity is irrelevant -- so the page beat the
+        panel however close the panel sat, and eight marks inside the
+        night box took paper paint: the moon's lit limb, dark limb and
+        rim, the sun's and Venus's dial rings, and an inset ring on three
+        roster chips that only paper is supposed to wear.  The custom
+        properties in the same sheet were always right, because a custom
+        property resolves from the NEAREST ancestor that sets it, and
+        that difference is what made the bug invisible.  The three
+        treatments are tokens now, so this asserts the mechanism rather
+        than the eleven selectors.  Skips when the playwright env is
+        absent."""
+        import json as jsonlib
+        import subprocess
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        write_assets(tmp_path)
+        marks = ('<span class="cel-chip cel-chip-sun" id="chip-sun"></span>'
+                 '<span class="cel-chip cel-chip-moon" id="chip-moon"></span>'
+                 '<span class="cel-chip cel-chip-venus" id="chip-venus"></span>'
+                 '<svg>'
+                 '<circle class="cel-geodot cel-ring cel-fill-sun" id="ring-sun"/>'
+                 '<circle class="cel-geodot cel-ring cel-fill-venus" id="ring-venus"/>'
+                 '<circle class="cel-moon-dark" id="moon-dark"/>'
+                 '<path class="cel-moon-lit" id="moon-lit"/>'
+                 '<circle class="cel-moon-rim" id="moon-rim"/>'
+                 '<line class="cel-stroke-sun" id="stroke-sun"/>'
+                 '</svg>')
+        for name, page, panel in (('island', 'theme-light', 'theme-dark'),
+                                  ('night', 'theme-dark', 'theme-dark'),
+                                  ('paper', 'theme-light', 'theme-light')):
+            (tmp_path / (name + '.html')).write_text(
+                '<!DOCTYPE html><html class="%s"><head><meta charset="utf-8">'
+                '<link rel="stylesheet" href="celestial.css"></head><body>'
+                '<div class="%s">%s</div></body></html>' % (page, panel, marks))
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'out = {}\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    page = b.new_page()\n'
+            '    for name in ("island", "night", "paper"):\n'
+            '        page.goto("file://%s/" + name + ".html")\n'
+            '        out[name] = page.evaluate("""() => {\n'
+            '          const s = i => getComputedStyle(document.getElementById(i));\n'
+            '          return {chip: s("chip-sun").boxShadow,\n'
+            '                  ringSun: s("ring-sun").stroke,\n'
+            '                  ringVenus: s("ring-venus").stroke,\n'
+            '                  moonDark: s("moon-dark").fill,\n'
+            '                  moonLit: s("moon-lit").fill,\n'
+            '                  moonRim: s("moon-rim").stroke,\n'
+            '                  rimOp: s("moon-rim").strokeOpacity,\n'
+            '                  strokeSun: s("stroke-sun").stroke};\n'
+            '        }""")\n'
+            '    b.close()\n'
+            'print(json.dumps(out))\n' % tmp_path)
+        res = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                             timeout=120)
+        assert res.returncode == 0, res.stderr
+        out = jsonlib.loads(res.stdout)
+        # The island renders exactly as a night page does -- every one of
+        # the eight, not merely the ones a spot check would notice.
+        assert out['island'] == out['night'], (out['island'], out['night'])
+        # And the night values really are the night ones, so an island
+        # matching a night page that had itself gone wrong proves nothing.
+        assert out['night']['moonDark'] == 'rgb(30, 39, 69)'      # #1E2745
+        assert out['night']['moonLit'] == 'rgb(221, 216, 196)'    # #DDD8C4
+        assert out['night']['moonRim'] == 'rgb(201, 208, 218)'    # --c-moon
+        assert out['night']['rimOp'] == '0.55'
+        assert out['night']['ringSun'] == 'rgb(10, 15, 34)'       # --halo
+        # No visible ring on night.  Not the literal `none` it used to be:
+        # the token carries the WIDTH, so night computes a zero-width
+        # inset shadow, which paints nothing.  Asserted as the rendered
+        # fact rather than the string, since that is what a reader sees.
+        assert (out['night']['chip'] == 'none'
+                or ' 0px 0px 0px 0px ' in out['night']['chip']), out['night']['chip']
+        # The paper plate is unchanged by the move to tokens: the ring is
+        # present, and the pale bodies take their edge rather than a white
+        # halo that would outline them in nothing.
+        assert out['paper']['chip'] != 'none'
+        assert ' 0px 0px 0px 0px ' not in out['paper']['chip'], out['paper']['chip']
+        assert out['paper']['ringSun'] == 'rgb(188, 120, 0)'      # --e-sun on paper
+        assert out['paper']['moonRim'] == 'rgb(136, 136, 136)'    # #888888
+        assert out['paper']['rimOp'] == '1'
+
+    def test_celestial_never_paints_skyfields_marks_in_a_real_browser(self, tmp_path):
+        """celestial.css styles a fragment's LABELS and never its MARKS.
+
+        That division is what lets a fragment sit on a plate other than
+        its page's.  It held trivially while weewx-skyfield painted every
+        mark with a baked fill/stroke attribute, which no stylesheet of
+        ours could reach.  From skyfield 2.4 the marks carry
+        `sky-fill-<role>` / `sky-stroke-<role>` classes whose defaults are
+        declared INSIDE the fragment at zero specificity, so any
+        `.sky-*` rule celestial ever shipped -- even one scoped to a
+        mismatched plate -- would outrank them and repaint the chart in
+        the page's colors.  We ship none, and this pins that: a mark
+        carrying skyfield's class and its own scoped default keeps that
+        default on a page of the OTHER plate, while the labels beside it
+        follow the fragment's plate as they always have.
+
+        Version-agnostic on purpose -- the fragment here is synthetic and
+        carries the 2.4 shape whatever skyfield is installed, so the
+        contract is pinned before 2.4 ships and after.  Skips when the
+        playwright env is absent."""
+        import json as jsonlib
+        import subprocess
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        write_assets(tmp_path)
+        # skyfield 2.4's own shape: the plate's values as zero-specificity
+        # defaults scoped to a palette class on the <svg> itself.
+        defaults = ('<style>:where(svg.sky-night) :where(.sky-fill-ink){fill:#E9E4D4}'
+                    ':where(svg.sky-night) :where(.sky-fill-brass){fill:#D3A94C}</style>')
+        (tmp_path / 'mismatch.html').write_text(
+            '<!DOCTYPE html><html class="theme-light"><head>'
+            '<link rel="stylesheet" href="celestial.css"></head><body>'
+            '<div id="dome-svg"><div class="domefrag" data-dome-palette="night">'
+            '<svg class="sky sky-night">' + defaults +
+            '<circle class="sky-fill-ink" id="mk"/>'
+            '<circle class="sky-fill-brass" id="mb"/>'
+            '<text class="cardinal" id="lc">N</text>'
+            '<text class="mono gridlab skylab" id="ls">30</text>'
+            '</svg></div></div></body></html>')
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            'with sync_playwright() as p:\n'
+            '    b = p.chromium.launch()\n'
+            '    page = b.new_page()\n'
+            '    page.goto("file://%s/mismatch.html")\n'
+            '    out = page.evaluate("[\'mk\', \'mb\', \'lc\', \'ls\'].map('
+            'function (i) { return getComputedStyle(document.getElementById(i)).fill; })")\n'
+            '    b.close()\n'
+            'print(json.dumps(out))\n' % tmp_path)
+        # The browser leg proves the two marks it draws; this pins the
+        # RULE, which is what the docstring actually claims -- a
+        # `.cel-fill-mars`-style selector added for a sky- class later
+        # would sail past two synthetic circles.
+        with open(os.path.join(SKIN_DIR, 'celestial.css'), encoding='utf-8') as f:
+            sheet = f.read()
+        assert re.search(r'\.sky-(fill|stroke)-', sheet) is None, (
+            'celestial.css must never paint a weewx-skyfield mark class')
+        res = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                             timeout=120)
+        assert res.returncode == 0, res.stderr
+        mark_ink, mark_brass, cardinal, skylab = jsonlib.loads(res.stdout)
+        # The marks: skyfield's night defaults, untouched by our stylesheet
+        # on a light page.
+        assert mark_ink == 'rgb(233, 228, 212)'      # #E9E4D4, the night ink
+        assert mark_brass == 'rgb(211, 169, 76)'     # #D3A94C, the night brass
+        # The labels beside them: ours, and on the fragment's plate.
+        assert cardinal == 'rgb(211, 169, 76)'       # night --brass
+        assert skylab == 'rgb(159, 165, 196)'        # night --skylab
+
     def test_a_panel_in_host_chrome_leaves_the_host_alone(self, tmp_path,
                                                           wxskyfield_almanac):
         """A panel embedded in ANOTHER skin's page styles itself and
@@ -8411,6 +8721,522 @@ class TestPanels:
         assert 'Traceback' not in caplog.text
 
 
+class TestAmericanEnglish(unittest.TestCase):
+    # The shared block reads self.REPO_ROOT; this module defines it at
+    # module scope, so it is bound here rather than by editing text that
+    # is meant to stay byte for byte the same across the repos sharing it.
+    REPO_ROOT = REPO_ROOT
+    # ------------------------------------------------------------------
+    # American English
+    # ------------------------------------------------------------------
+    #
+    # A ratchet.  Prose drifts one word at a time and the drift is
+    # invisible in review, because every one of these spellings is
+    # correct somewhere -- just not here.  This is a sweep of every
+    # tracked text file, so it covers comments, docstrings, templates,
+    # changes.txt, the manual and the shipped skin, which is where all
+    # twenty-two of the words fixed on 2026-09-08 were living.
+    #
+    # THIS BLOCK IS SHARED VERBATIM with weewx-loopdata, weewx-celestial,
+    # weewx-skyfield and one private sibling.  Naming all four the same
+    # way keeps this sentence identical in every copy, and names no
+    # private repository in a public one.  The word lists, the guards and
+    # the oracle are byte for byte the same, so a fix made in one is
+    # pasted into the rest rather than rediscovered there.  Four
+    # independent versions of this test is what the sharing exists to
+    # prevent.
+    #
+    # EXACTLY FIVE THINGS ARE PER-REPO, and they are marked PER-REPO where
+    # they are defined: NOT_OURS, QUOTED_PROPER_NOUNS, LANG_DIR,
+    # LANG_IN_ENGLISH and A_TRACKED_FILE.  An earlier version of this
+    # comment said two, having forgotten that the sanity check names a
+    # file; whoever pasted it next met a failure that blamed their working
+    # directory.  If you add a sixth, say so HERE -- the next person
+    # should read what differs, not discover it.
+    #
+    # IN A PYTEST-ONLY SUITE, host it as
+    # `class TestAmericanEnglish(unittest.TestCase)` with `REPO_ROOT` as a
+    # class attribute.  pytest collects a TestCase without complaint and
+    # every method body below stays byte-identical, where translating the
+    # assertions to bare asserts would end the sharing at the first edit.
+    #
+    # THE '*' IN EVERY ENTRY IS STRIPPED BEFORE USE.  It is there so that
+    # no British spelling appears literally in this file, which is what
+    # lets the sweep cover this file too -- no self-exclusion, and so no
+    # blind spot in the eleven thousand lines of tests around it.  A word
+    # added without its '*' fails the sweep on its own line, which is the
+    # right way round to get that wrong.
+    #
+    # Add a word here when one turns up, rather than fixing a file
+    # quietly.  If a British spelling is ever legitimate -- a quoted
+    # product name, a proper noun -- this is the place to record it.
+    BRITISH_SPELLINGS = (
+        'label*led', 'unlabel*led', 'label*ling', 'colo*ur', 'colo*urs',
+        'colo*ured', 'colo*uring', 'behavio*ur', 'behavio*urs', 'hono*ur',
+        'cent*re', 'cent*res', 'cent*red', 'gr*ey', 'gr*eyer', 'gr*eyish',
+        'judge*ment', 'judge*ments', 'age*ing', 'whil*st', 'among*st',
+        'analog*ue', 'orientat*ed', 'defen*ce', 'licen*ce', 'program*me',
+        'catalog*ue', 'cancel*led', 'model*led', 'travel*ling',
+        'signal*ling', 'met*re', 'met*res', 'fib*re', 'scept*ic',
+        'artef*act', 'enr*ol', 'fulf*il', 'inst*il', 'skil*ful',
+        'favo*ur', 'flavo*ur', 'neighbo*ur', 'labo*ur', 'vapo*ur',
+        'armo*ur', 'rumo*ur', 'savo*ur', 'harbo*ur', 'humo*ur', 'odo*ur',
+        'valo*ur', 'cando*ur', 'demeano*ur', 'endeavo*ur', 'splendo*ur',
+        'savio*ur', 'clamo*ur', 'parlo*ur',
+        'theat*re', 'lit*re', 'calib*re', 'somb*re', 'spect*re', 'lust*re',
+        'manoeuv*re', 'offen*ce', 'preten*ce', 'practi*se', 'practi*sing',
+        'cent*ring',
+        'cancel*ling', 'model*ling', 'travel*led', 'signal*led',
+        'level*led', 'level*ling', 'total*led', 'fuel*led', 'dial*led',
+        'dial*ling', 'equal*led', 'channel*led', 'marvel*lous',
+        'mo*uld', 'plo*ugh', 'dra*ught', 'lear*nt',
+        # The -y*se verbs and the four -i*se verbs whose AMERICAN form is
+        # itself the stem.  These CANNOT become stems below: analy*sis,
+        # emphas*is, Polar*is and Borealis are all correct, and a stem
+        # would flag every one of them.  Because they are entered as
+        # whole words, each inflection has to be listed -- which is the
+        # very cost the stems exist to avoid, so keep this list short.
+        'analy*se', 'analy*sed', 'analy*sing',
+        'paraly*se', 'paraly*sed', 'paraly*sing',
+        'cataly*se', 'cataly*sed', 'cataly*sing',
+        'reali*se', 'reali*sed', 'reali*sing', 'reali*sation',
+        'emphasi*se', 'emphasi*sed', 'emphasi*sing',
+        'polari*se', 'polari*sed', 'polari*sing', 'polari*sation',
+        # DELIBERATELY ABSENT: glamo*ur, which is the ordinary American
+        # spelling as well, and dialog*ue, which American style accepts
+        # alongside dialog.  A word only belongs here if the American
+        # form is the ONLY correct one.
+    )
+
+    # The -i*se verbs, as STEMS ENDING IN `is` rather than as words.
+    #
+    # This is the whole reason the list above is not simply longer.  The
+    # four inflections do not contain one another: token*ise does NOT
+    # match token*ising, because the letter after `is` is an i and not an
+    # e, and neither of them matches token*isation.  A list of -i*se
+    # WORDS therefore sees roughly one inflection in three -- measured on
+    # this tree, twenty of twenty -ing and -ation forms were invisible,
+    # and a recogn*ising in docs/troubleshooting.md had been sitting
+    # through a green suite because of it.  One stem catches all four.
+    #
+    # Every stem is guarded (?![mt]), uniformly rather than by naming
+    # exceptions, because each one runs into the -ism and -ist nouns:
+    # unguarded, these flag characteristics, realistic, optimistic,
+    # specialist, finalist, apologist, organism and criticism, all
+    # correct American.  Nothing is lost, because no British-only
+    # spelling puts an m or a t after `is`.
+    #
+    # The guard is a constant rather than a value inlined in the builder
+    # so that it can be taken away and the loss measured.  It is already
+    # pinned: emptying it fails test_british_spelling_pattern, because
+    # MUST_SPARE carries characteristics, organism, specialist and the
+    # rest of the -ism and -ist nouns it exists to spare.
+    IS_STEM_GUARD = 'mt'
+
+    BRITISH_IS_STEMS = (
+        'util*is', 'custom*is', 'optim*is', 'normal*is', 'initial*is',
+        'serial*is', 'standard*is', 'synchron*is', 'visual*is',
+        'special*is', 'priorit*is', 'minim*is', 'maxim*is', 'apolog*is',
+        'critic*is', 'token*is', 'author*is', 'categor*is', 'character*is',
+        'familiar*is', 'final*is', 'general*is', 'item*is', 'memor*is',
+        'modern*is', 'random*is', 'stabil*is', 'symbol*is', 'sanit*is',
+        'summar*is', 'recogn*is', 'organ*is', 'local*is',
+    )
+
+    # Letters that must NOT follow a spelling, where it is a prefix of a
+    # correct American word.  Without these, substring matching cries
+    # wolf on fulfill, instill, enrolled, greyhound, programmer and
+    # PROGRAMMED -- the last of which is ordinary American and cost a
+    # code review to find, because a single-letter guard for programmer
+    # let it through.  The -se guards spare analyses, paralyses and
+    # catalyses, the ordinary American plurals of analysis, paralysis
+    # and catalysis.  (The cost is that the British VERB analyses goes
+    # unseen; a false alarm on correct prose would be worse, and
+    # analy*sed is still caught.)
+    PREFIX_OF_AN_AMERICAN_WORD = {
+        'fulf*il': 'l', 'inst*il': 'l', 'enr*ol': 'l', 'gr*ey': 'h',
+        'program*me': 'rd', 'analy*se': 's', 'paraly*se': 's',
+        'cataly*se': 's',
+    }
+
+    # Files this repo ships but does not AUTHOR.  The rule is about the
+    # bytes we write; someone else's verbatim text is not ours to
+    # correct, and "fix the spelling" and "keep it verbatim" cannot both
+    # be obeyed.  PER-REPO: this tuple is the one part of the shared
+    # block that differs between the four repos.
+    #
+    # LICENSE is the FSF's text.  It happens to clear the pattern today
+    # -- this is a guard against a future revision of it, not a fix for
+    # a present failure.
+    #
+    # The four weewx.conf fixtures are Tom Keffer's WEEWX CONFIGURATION
+    # FILE, copied whole so the tests parse what a real station parses.
+    # Editing them would be a worse bug than the one it prevents: they
+    # would stop matching what WeeWX ships, which is the only reason
+    # they exist.  The word in them is WeeWX's own comment on its meter
+    # label, offering the British spelling to the reader as a choice --
+    # a sentence that cannot survive having its subject corrected.
+    # Identifiers from other people's code that this project only
+    # QUOTES.  Python's asyncio really does spell it Cancel*ledError, and
+    # the British word is a strict PREFIX of that name, so no guard
+    # letter can separate them -- the only way is to remove the token
+    # from the text before matching.  Shared, not per-repo: it is
+    # Python's name, and any repo that mentions asyncio meets it the day
+    # it pastes this block.  Stripped before splitlines(), so the
+    # whole-file pass and the line pass agree.
+    FOREIGN = ('Cancel*ledError',)
+
+    # Phrases in OUR OWN prose that are somebody else's name: a
+    # publication title, an organization's English name, a product.
+    # NOT_OURS exempts whole files we did not author; this exempts a
+    # PHRASE inside a file we did.  A sibling repo needs it for a
+    # catalog title and an institute's name that appear in a credit its
+    # data license requires verbatim -- Americanizing either would
+    # misquote a title or rename an organization, which is a worse fault
+    # than the spelling.
+    #
+    # PER-REPO, like NOT_OURS.  Most repos have none, and an empty tuple
+    # is the normal case; this repo quotes no such title.  The mechanism
+    # is carried anyway so that it is here the day one is quoted, and so
+    # that the copies stay identical -- the same reason the lang
+    # constants below are carried by a repo with no translations.
+    #
+    # Three properties, each of which cost a sibling something to learn:
+    # entries carry the '*' like every other list here, because literal
+    # ones would be blanked out of THIS file too and it would pass while
+    # containing what it forbids; the blanking is scoped to the PHRASE
+    # and never the line, since a misspelling typed beside a quoted title
+    # is still a mistake and those paragraphs are the ones most likely to
+    # be re-edited; and a phrase is replaced by a SPACE rather than
+    # removed, so the words on either side cannot run together into a
+    # match.  Matching is literal, so a phrase must sit on one line --
+    # the staleness assertion at the end of the sweep is what says so
+    # when a citation gets reflowed.
+    QUOTED_PROPER_NOUNS = (
+        'Hipparcos and Tycho Catalo*gues',
+        'Hipparcos Catalo*gue',
+    )
+
+    # PER-REPO.  A file the sweep can be sure is tracked, so that an
+    # empty or wrong listing is reported as such instead of passing as a
+    # clean tree.
+    A_TRACKED_FILE = 'bin/user/celestial.py'
+
+    # PER-REPO.
+    NOT_OURS = (
+        'LICENSE',
+    )
+
+    # The translations are not English, and an English spelling rule
+    # applied to them is simply wrong: fr.conf's French for "they use",
+    # and no.conf's and sv.conf's Norwegian and Swedish for
+    # "standardizes", all carry the British verb ending and all three
+    # are correct in their own language.
+    #
+    # But only the TRANSLATED half is exempt.  Every lang file opens
+    # with an English header this repo wrote -- nineteen to twenty-seven
+    # lines of it, explaining where the vocabulary came from and where
+    # to send corrections -- and a file-level exemption hid all of it
+    # while this test's docstring claimed every tracked byte.  So the
+    # sweep runs down to the first [section] and stops there, which is
+    # where the translated text starts in all nine files.
+    #
+    # en.conf is swept whole: it is English, and it is the reference
+    # dictionary every other lang file is checked against.  Derived from
+    # the PATH rather than listed, so a new translation is exempt the day
+    # it lands.  PER-REPO: a repo with no lang directory keeps these
+    # constants and the code, so the rule is already in place when one
+    # arrives.
+    LANG_DIR = 'skins/Celestial/lang/'
+    LANG_IN_ENGLISH = 'skins/Celestial/lang/en.conf'
+
+    def _british_spelling_re(self):
+        """One alternation, matched ANYWHERE in a line.
+
+        Lower case only, and the caller lowers the text to match.  The
+        obvious re.IGNORECASE costs 5.4 seconds over this tree against
+        0.7 for lowering the text first -- a third of the whole suite,
+        and paid again on every mutant, since this test is in the
+        spec-only runner and can never kill one.  The entries must
+        therefore stay lower case, guard letters included.
+        """
+        words, bars = self._british_words_and_bars()
+        # A guard on the guards: a typo in a PREFIX key would silently
+        # stop guarding the word it names, and the false alarm that
+        # follows looks like a spelling error in correct prose.
+        self.assertEqual(
+            sorted(set(bars) - set(words)), [],
+            'PREFIX_OF_AN_AMERICAN_WORD names a word in neither list')
+        self.assertEqual(
+            [entry for entry in self.BRITISH_SPELLINGS + self.BRITISH_IS_STEMS
+             if entry.lower() != entry], [],
+            'the word lists must be lower case; see _british_spelling_re')
+        return re.compile(
+            '|'.join(re.escape(word) +
+                     ('(?![%s])' % bars[word] if bars.get(word) else '')
+                     for word in words))
+
+    def _british_words_and_bars(self):
+        """Every spelling to look for, and the letters barred after it."""
+        bars = {word.replace('*', ''): letters for word, letters
+                in self.PREFIX_OF_AN_AMERICAN_WORD.items()}
+        words = [entry.replace('*', '') for entry in self.BRITISH_SPELLINGS]
+        for stem in self.BRITISH_IS_STEMS:
+            stem = stem.replace('*', '')
+            words.append(stem)
+            bars[stem] = self.IS_STEM_GUARD
+        return words, bars
+
+    # What the pattern must catch, and what it must leave alone.  Same
+    # '*' convention as the lists above.
+    MUST_FLAG = (
+        'colo*ur', 'colo*urs', 'recolo*ur', 'colo*urful', 'behavio*ur',
+        'hono*urs', 'neighbo*ur', 'cent*re', 'centimet*re', 'met*res',
+        'gr*ey', 'judge*ment', 'label*led', 'cancel*ling', 'travel*led',
+        'level*ling', 'program*me', 'program*mes', 'fulf*il', 'inst*il',
+        'enr*ol', 'licen*ce', 'defen*ce', 'offen*ce', 'preten*ce',
+        'practi*se', 'theat*re', 'lit*re', 'calib*re', 'mo*uld',
+        'smo*ulder', 'plo*ugh', 'dra*ught', 'lear*nt', 'artef*act',
+        'scept*ical', 'whil*st', 'among*st', 'age*ing', 'analog*ue',
+        'catalog*ue', 'orientat*ed', 'local*isation', 'local*ised',
+        'scept*icism', 'practi*sing', 'cent*ring',
+        # The four inflections of a stem, which is the whole point of
+        # BRITISH_IS_STEMS -- delete the stems and the last two of these
+        # go unseen while everything else here still passes.
+        'token*ise', 'token*ised', 'token*ising', 'token*isation',
+        'recogn*ising', 'organ*isation', 'normal*ising',
+        'character*ised', 'critic*ising', 'special*isation',
+        # The words that had to stay whole because their American form
+        # is the stem.
+        'analy*sed', 'analy*sing', 'paraly*sed', 'reali*se',
+        'reali*sing', 'reali*sation', 'emphasi*sed', 'emphasi*sing',
+        'polari*sed', 'polari*sing',
+        # An identifier, with no word boundary anywhere near the word.
+        'test_colo*urs_arrive',
+    )
+
+    MUST_SPARE = (
+        # Correct American spellings of the words above.
+        'color', 'colors', 'colorful', 'behavior', 'honor', 'honorable',
+        'neighbor', 'center', 'centered', 'concentrate', 'centimeter',
+        'meters', 'barometer', 'thermometer', 'diameter', 'parameters',
+        'gray', 'grayscale', 'judgment', 'labeled', 'canceling',
+        'traveled', 'leveling', 'license', 'licensed', 'defense',
+        'offense', 'pretense', 'practice', 'theater', 'liter', 'caliber',
+        'mold', 'smolder', 'plow', 'draft', 'learned', 'artifact',
+        'skeptical', 'skeptic', 'skepticism', 'analog', 'catalog',
+        'oriented', 'fiber', 'somber', 'localization', 'localized',
+        'practicing', 'centering',
+        # The prefix traps, every one of which a naive matcher flags.
+        'programmed', 'programmer', 'programming', 'fulfill', 'fulfilled',
+        'instill', 'install', 'installer', 'enroll', 'enrolled',
+        'enrollment', 'greyhound', 'cancellation', 'skillful',
+        # American plurals and nouns that ARE the British verb's stem.
+        'analyses', 'analysis', 'paralyses', 'paralysis', 'catalyses',
+        'emphasis', 'synthesis', 'hypothesis',
+        # Proper nouns.  Every one of these is a star or a constellation
+        # this family of extensions names, and Borealis is what a
+        # real*is stem flagged in en.conf before it was entered whole.
+        'Polaris', 'Corona Borealis', 'Corona Australis',
+        # The -ism and -ist nouns the (?![mt]) guard exists for.
+        'characteristics', 'realistic', 'optimistic', 'specialist',
+        'finalist', 'apologist', 'organism', 'criticism', 'symbolism',
+        'modernist', 'journalist', 'scientist', 'utility',
+        # American -ize forms, which must never be mistaken for their
+        # British cousins.
+        'recognized', 'organized', 'normalizing', 'tokenization',
+        'initialized', 'summarized', 'authorized', 'categorized',
+        # Verbs that end in -ise in AMERICAN English.
+        'advertise', 'exercise', 'surprise', 'compromise', 'supervise',
+        'franchise', 'enterprise', 'comprise', 'precise', 'concise',
+        'otherwise', 'revise', 'devise', 'improvise', 'disguise',
+        'promise', 'premise', 'wise',
+        # Ordinary words that happen to contain a fragment of one.
+        'should', 'shoulder', 'could', 'would', 'through', 'thorough',
+        'drought', 'learning', 'aging', 'managing', 'messaging',
+    )
+
+    def test_british_spelling_pattern(self):
+        """The oracle, and it is not optional.
+
+        A PASSING SWEEP PROVES NOTHING ABOUT THE WORD LIST.  An empty
+        list passes.  So does one whose guards are so wide they spare
+        the words they were meant to catch, and so does one that misses
+        two inflections in four.  Both of those were real here: the
+        sweep, a green suite and eleven hand-run sabotage cases all
+        passed while `programmed` was being flagged as British and every
+        -i*sing and -i*sation form was invisible.  This test is what
+        sees that class, by asserting on the compiled pattern directly
+        rather than on the tree.
+
+        Add to MUST_SPARE whenever a guard is widened, and to MUST_FLAG
+        whenever a word or a stem is added.
+        """
+        want = self._british_spelling_re()
+        missed = [entry.replace('*', '') for entry in self.MUST_FLAG
+                  if not want.search(entry.replace('*', '').lower())]
+        self.assertEqual(missed, [],
+                         'the pattern does not catch these British spellings')
+        flagged = []
+        for word in self.MUST_SPARE:
+            found = want.search(word.lower())
+            if found is not None:
+                flagged.append('%s (matched %r)' % (word, found.group(0)))
+        self.assertEqual(flagged, [],
+                         'the pattern flags correct American English')
+
+    def test_every_entry_can_still_be_reached(self):
+        """A guard can retire the word it was meant to protect.
+
+        Widen one -- 'gr*ey': 'h' to 'hs', say, to spare some new word --
+        and gr*eys stops being caught while every other test here stays
+        green, because MUST_FLAG holds the bare word and a bare word
+        always matches: the lookahead sits at the end of the string with
+        nothing to reject.  Seventy-nine of the entries are not in
+        MUST_FLAG at all, so most of the list can be retired this way
+        without anything noticing.
+
+        Two assertions close it.  The first appends a letter the guard
+        PERMITS, so an entry made unreachable is seen.  The second is the
+        one that matters: every letter barred by a hand-written guard
+        must be JUSTIFIED by a word in MUST_SPARE that needs it -- which
+        is what widening a guard legitimately means.  Widen one without
+        adding the American word that forced it, and this fails.
+
+        The uniform stem guard is deliberately exempt from the second
+        rule: it is one policy justified once, by the -ism and -ist nouns
+        in MUST_SPARE, not a per-word judgment, and no British-only
+        spelling puts an m or a t after `is`.
+        """
+        want = self._british_spelling_re()
+        words, bars = self._british_words_and_bars()
+        spare = [word.lower() for word in self.MUST_SPARE]
+        stems = {stem.replace('*', '') for stem in self.BRITISH_IS_STEMS}
+        unreachable, unjustified = [], []
+        for word in words:
+            barred = bars.get(word, '')
+            allowed = next((c for c in 'abcdefghijklmnopqrstuvwxyz'
+                            if c not in barred), None)
+            self.assertIsNotNone(
+                allowed, '%s bars every letter there is' % word)
+            if not want.search(word + allowed):
+                unreachable.append(word + allowed)
+            if word in stems:
+                continue
+            for letter in barred:
+                if not any(word + letter in word_spared for word_spared in spare):
+                    unjustified.append('%s(?!%s)' % (word, letter))
+        self.assertEqual(unreachable, [],
+                         'these spellings can no longer be matched at all')
+        self.assertEqual(
+            unjustified, [],
+            'a guard bars a letter with no MUST_SPARE word needing it; '
+            'add the American word that forced the guard, or narrow it')
+
+    def test_no_british_spellings(self):
+        """American English, in every byte this repo tracks.
+
+        MATCHING IS BY SUBSTRING, NOT BY WHOLE WORD.  A word-boundary
+        search has two blind spots, and a sibling repo fell into both.
+        It misses a spelling inside an IDENTIFIER, because '_' is
+        itself a word character and the boundary never appears -- a
+        test named test_colo*urs_arrive went unseen that way.  And it
+        misses a spelling inside a longer WORD, because to such a
+        search hono*urs is simply a different word from hono*ur.  Hence
+        no boundaries; the handful of British spellings that are
+        prefixes of correct American words carry an explicit guard
+        instead of relying on \\b to do it by accident.
+
+        Sabotage it by putting one British spelling in any tracked text
+        file, including this one.
+        """
+        listed = subprocess.run(['git', 'ls-files'], cwd=self.REPO_ROOT,
+                                capture_output=True, text=True)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        names = [name for name in listed.stdout.split('\n') if name]
+        self.assertIn(self.A_TRACKED_FILE, names,
+                      'git ls-files listed nothing useful; is REPO_ROOT right?')
+        # An exemption for a file that no longer exists is not a
+        # harmless leftover.  Rename a fixture and its NOT_OURS entry
+        # stops matching, so WeeWX's text is swept as though it were
+        # ours; rename the skin and every translation is.  Either way
+        # the failure that follows is a pile of correct prose, and the
+        # obvious reading of it is that the sweep is broken.  Say which
+        # exemption went stale instead.
+        for name in self.NOT_OURS:
+            self.assertIn(name, names,
+                          'NOT_OURS names a file git does not track')
+        translations = [n for n in names if n.startswith(self.LANG_DIR)
+                        and n != self.LANG_IN_ENGLISH]
+        # Only where a lang directory actually exists.  A repo with no
+        # translations still carries the constants and the line-level
+        # exemption below, dormant, so the rule is already in place the
+        # day one lands -- and an unconditional assertion here would
+        # mean such a repo could not paste this block at all.
+        if any(name.startswith(self.LANG_DIR) for name in names):
+            self.assertIn(self.LANG_IN_ENGLISH, names,
+                          'the reference lang file moved; LANG_DIR is stale')
+            self.assertTrue(translations,
+                            'no translations under LANG_DIR; the path is stale')
+        want = self._british_spelling_re()
+        hits = []
+        seen_quoted = set()
+        for name in names:
+            if name in self.NOT_OURS:
+                continue
+            try:
+                with open(os.path.join(self.REPO_ROOT, name), 'rb') as f:
+                    blob = f.read()
+            except OSError:
+                # Tracked but not on disk: a deleted file, a half-done
+                # rename, or a path git has quoted.  There is nothing to
+                # sweep, and erroring the whole run over it would read
+                # as the sweep being broken.
+                continue
+            if b'\x00' in blob:
+                continue                # an image, not text
+            # errors='replace' rather than a skip on failure: a file
+            # that will not decode cleanly is still swept, so one stray
+            # byte cannot hide the rest of it.
+            text = blob.decode('utf-8', 'replace')
+            for token in self.FOREIGN:
+                text = text.replace(token.replace('*', ''), '')
+            for phrase in self.QUOTED_PROPER_NOUNS:
+                phrase = phrase.replace('*', '')
+                if phrase in text:
+                    seen_quoted.add(phrase)
+                    text = text.replace(phrase, ' ')
+            lines = text.splitlines()
+            if name in translations:
+                # The English header only, down to the first [section].
+                cut = next((i for i, line in enumerate(lines)
+                            if line.lstrip().startswith('[')), None)
+                self.assertIsNotNone(
+                    cut, '%s has no [section]; the header cannot be found, '
+                         'and sweeping it whole would flag its translation'
+                         % name)
+                lines = lines[:cut]
+            # Whole file first, line by line only when that hits, so the
+            # line numbers cost nothing on the files that are clean --
+            # which is all of them, every run but the one that matters.
+            if want.search('\n'.join(lines).lower()) is None:
+                continue
+            for number, line in enumerate(lines, 1):
+                found = want.search(line.lower())
+                if found is not None:
+                    hits.append('%s:%d: %s' % (name, number, line.strip()))
+        self.assertEqual(
+            hits, [],
+            'British spellings found; this project writes American English:\n'
+            + '\n'.join(hits))
+        self.assertEqual(
+            sorted(phrase.replace('*', '') for phrase in
+                   self.QUOTED_PROPER_NOUNS
+                   if phrase.replace('*', '') not in seen_quoted), [],
+            'QUOTED_PROPER_NOUNS names a phrase that is not in the tree on '
+            'one line; reword the entry or reflow the prose')
+
+
 class TestI18n:
     """The page's translation plumbing (7.2) -- the same machinery
     weewx-skyfield 1.12/1.13 ships: [Texts] is gettext-style (the English
@@ -8424,7 +9250,7 @@ class TestI18n:
 
     LANG_DIR = os.path.join(SKIN_DIR, 'lang')
     BODIES = ['sun', 'moon', 'mercury', 'venus', 'earth', 'mars', 'jupiter',
-              'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri']
+              'saturn', 'uranus', 'neptune', 'proxima_centauri']
 
     # [Texts] keys that render INSIDE the embedded dome: wxskyfield_sky's
     # SkyPage translates its own strings through the report's skin_dict,
@@ -10023,7 +10849,7 @@ class TestSatelliteUtility:
         assert report['fields_removed'] == ['almanac.zenit.az', 'almanac.zenit.alt']
         # A remove that writes: no [[Satellites]] section at all, so the
         # rebuild re-derives the installer defaults (John has twice
-        # ruled that behaviour stands -- but it may not happen SILENTLY).
+        # ruled that behavior stands -- but it may not happen SILENTLY).
         bare = ('[Station]\n    location = Test\n[StdReport]\n'
                 '    [[CelestialReport]]\n        skin = Celestial\n')
         conf2 = self._write_conf(tmp_path, bare)
@@ -10608,7 +11434,7 @@ class TestInstallerDeclaresFields:
         engine = self._engine(config)
         assert self._installer().configure(engine) is True
         text = '\n'.join(engine.printer.lines)
-        assert ('still carries 69 entries this page now declares itself; '
+        assert ('still carries 66 entries this page now declares itself; '
                 'weewx-loopdata evaluates those twice per loop packet') in text
         assert config['LoopData']['Include']['fields'] == legacy    # untouched
         # Only what THIS station declares counts: tiangong's entries on
@@ -10636,7 +11462,7 @@ class TestInstallerDeclaresFields:
                                'Formatting': {'target_report': 'CelestialReport'}}}
         engine = self._engine(config)
         self._installer().configure(engine)
-        assert 'still carries 50 entries' in '\n'.join(engine.printer.lines)
+        assert 'still carries 47 entries' in '\n'.join(engine.printer.lines)
         # Enabled again (explicitly, and by saying nothing): shared.
         for enable in ('true', None):
             section = {'skin': 'Celestial'}
@@ -10668,7 +11494,7 @@ class TestInstallerDeclaresFields:
         config['LoopData']['Formatting']['target_report'] = 'Seasons'     # no declaring report
         engine = self._engine(config)
         self._installer().configure(engine)
-        assert 'still carries 50 entries' in '\n'.join(engine.printer.lines)
+        assert 'still carries 47 entries' in '\n'.join(engine.printer.lines)
 
     def test_nothing_is_counted_twice_that_loopdata_renders_once(self):
         """weewx-loopdata renders the legacy line through its
@@ -10698,7 +11524,7 @@ class TestInstallerDeclaresFields:
                                   'Formatting': {'target_report': 'LiveSeasonsReport'}}}
         engine = self._engine(elsewhere)
         self._installer().configure(engine)
-        assert 'still carries 50 entries' in '\n'.join(engine.printer.lines)
+        assert 'still carries 47 entries' in '\n'.join(engine.printer.lines)
 
     def test_uninstall_prunes_the_whole_stanza(self):
         """The whole install/uninstall round trip through weecfg's own
@@ -10825,6 +11651,23 @@ class TestInstallerLoader:
     say why.  A dev build is given the benefit of the doubt, exactly as
     the WeeWX floor is."""
 
+    def _with_skyfield(self, monkeypatch, version):
+        """Place (or remove) a user.wxskyfield of the given version.
+
+        Called after _with_loopdata, which installs the `user` package
+        this hangs off."""
+        import types
+        user = sys.modules['user']
+        if version is not None:
+            sky = types.ModuleType('user.wxskyfield')
+            sky.WXSKYFIELD_VERSION = version
+            user.wxskyfield = sky
+            monkeypatch.setitem(sys.modules, 'user.wxskyfield', sky)
+        else:
+            monkeypatch.delitem(sys.modules, 'user.wxskyfield', raising=False)
+            if hasattr(user, 'wxskyfield'):
+                monkeypatch.delattr(user, 'wxskyfield')
+
     def _with_loopdata(self, monkeypatch, version):
         import types
         user = types.ModuleType('user')
@@ -10875,6 +11718,62 @@ class TestInstallerLoader:
         message = str(info.value)
         assert 'weewx-loopdata 7.0 or later' in message
         assert 'none is installed' in message
+
+    # ---- the weewx-skyfield 2.4 floor (9.1) ----------------------------
+    #
+    # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or the
+    # built-in almanac -- so ABSENCE must not refuse.  But 9.1 is pinned
+    # to 2.4: the pass dot flips by exchanging the role classes 2.4
+    # introduced, and the light plate's brass is 2.4's value.  On an
+    # older one the dot silently stands as drawn and the paper page
+    # disagrees with its own charts, neither of which says anything in
+    # any log -- so a skyfield that IS there and is too old refuses.
+
+    @pytest.mark.parametrize('version', ['2.4', '2.4.1', '2.5', '3.0', '2.4a1', '2.4b1'])
+    def test_loads_with_skyfield_2_4(self, monkeypatch, version):
+        self._with_loopdata(monkeypatch, '7.2')
+        self._with_skyfield(monkeypatch, version)
+        monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
+        assert load_installer().loader()['name'] == 'celestial'
+
+    # '2.4b1' is NOT here: WeeWX's version_compare reads a dev build of
+    # 2.4 as 2.4, exactly as the weewx-loopdata floor above reads
+    # '7.0a1' as 7.0.  A pre-release of the version BELOW the floor
+    # ('2.3.9b1') is what must refuse.
+    @pytest.mark.parametrize('version', ['2.3.5', '2.3.4', '2.1', '1.16', '2.3.9b1'])
+    def test_refuses_an_older_skyfield(self, monkeypatch, version):
+        self._with_loopdata(monkeypatch, '7.2')
+        self._with_skyfield(monkeypatch, version)
+        monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
+        with pytest.raises(SystemExit) as info:
+            load_installer().loader()
+        message = str(info.value)
+        assert 'weewx-skyfield 2.4 or later' in message
+        assert 'found %s' % version in message
+
+    def test_no_skyfield_at_all_still_installs(self, monkeypatch):
+        """Absence is not a refusal: the page renders without it."""
+        self._with_loopdata(monkeypatch, '7.2')
+        self._with_skyfield(monkeypatch, None)
+        monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
+        assert load_installer().loader()['name'] == 'celestial'
+
+    @pytest.mark.parametrize('argv', [
+        ['weectl', 'extension', 'list'],
+        ['weectl', 'extension', 'uninstall', 'celestial'],
+        ['wee_extension', '--list-extensions'],
+        ['wee_extension', '--uninstall=celestial'],
+    ])
+    def test_an_older_skyfield_still_lists_and_uninstalls(self, monkeypatch, argv):
+        """The same trap the loopdata floor is gated against: WeeWX runs
+        the CACHED install.py's loader() for `list` and `uninstall` too,
+        and those catch only ExtensionError -- so a SystemExit here would
+        leave a station that has since downgraded weewx-skyfield unable
+        to list its extensions or to remove this one."""
+        self._with_loopdata(monkeypatch, '7.2')
+        self._with_skyfield(monkeypatch, '2.3.5')
+        monkeypatch.setattr(sys, 'argv', argv)
+        assert load_installer().loader()['name'] == 'celestial'
 
     @pytest.mark.parametrize('source, wanted', [
         ("raise RuntimeError('boom')\n", 'RuntimeError: boom'),
@@ -11388,7 +12287,7 @@ DOCS_DIR = os.path.join(REPO_ROOT, 'docs')
 # Named here so the countdown-chip audit can subtract them; the skin's
 # own count is pinned separately by the render tests.
 _DIAL_BODIES = ('sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-                'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri')
+                'saturn', 'uranus', 'neptune', 'proxima_centauri')
 
 # The installer's default satellite and comet tags -- what the shipped
 # fields line (and therefore the manual's copy of it) is written for.
@@ -11624,7 +12523,7 @@ class TestManualInStepWithCode:
         """docs/i18n.md's status table has a row per shipped translation
         -- and en.conf, the reference dictionary, is not a translation, so
         it must NOT have one.  A new lang file with no row ships
-        uncredited and unlabelled; a row whose file is gone credits a
+        uncredited and unlabeled; a row whose file is gone credits a
         language the skin no longer speaks.  The spelled-out count in the
         lead sentence is pinned to the same set."""
         page = _doc_text('i18n.md')
@@ -11711,7 +12610,7 @@ class TestManualInStepWithCode:
     _UNDECLARED_BY_DESIGN = {
         # Commented out in skin.conf on purpose: with no setting, the
         # STATION's zone is auto-detected at report time, which is the
-        # behaviour remote viewers of a public page want.
+        # behavior remote viewers of a public page want.
         'time_zone',
         # Optional overrides of the page heading and the HTML <title>;
         # absent, the skin composes both from the station's location.
@@ -12061,7 +12960,7 @@ class TestManualInStepWithCode:
         and the stanza tells the reader a value that is not in force --
         the one way this scheme can do real harm.  (John, 2026-08-28.)
 
-        Which side moves when this fails is a JUDGEMENT, not a rule, and
+        Which side moves when this fails is a JUDGMENT, not a rule, and
         the mechanical instinct is the wrong one.  Editing the commented
         assignment down to skin.conf's number makes the test pass and
         silently changes what every new station gets, because the live

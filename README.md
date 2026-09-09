@@ -10,7 +10,7 @@ Copyright (C)2022-2026 by John A Kline (john@johnkline.com)
 ## What it is
 
 weewx-celestial adds one page to your WeeWX site: **the sky over your station
-as it stands this second**.  Where the sun, moon and eight planets are — the
+as it stands this second**.  Where the sun, moon and planets are — the
 compass bearing of each, how far away it is, whether it is up or below the
 horizon.  Which stars and constellations are overhead.  Which satellites are
 crossing right now, and when the next one will be bright enough to walk
@@ -41,14 +41,14 @@ counts to zero and rolls itself to the next sunrise, with no reload:
 
 ![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll-2026-08-18.gif)
 
-**The Geocentric** — Earth at the center, every body (sun, moon, the eight
-planets, Proxima Centauri) placed by compass bearing and log distance, the
-moon at its true phase, bodies below the horizon dimmed and dashed, an
-hour-long motion trail behind every dot, and a roster whose distance
-odometers tick between packets at each body's true radial rate.  With
-weewx-skyfield 2.1, every configured comet joins the dial as a diamond whose
-three-ray tail fans anti-sunward — solid when naked-eye bright, and honestly
-absent when the Minor Planet Center has dropped its elements.
+**The Geocentric** — Earth at the center, every body (sun, moon, Mercury
+through Neptune, Proxima Centauri) placed by compass bearing and log
+distance, the moon at its true phase, bodies below the horizon dimmed and
+dashed, an hour-long motion trail behind every dot, and a roster whose
+distance odometers tick between packets at each body's true radial rate.
+Every configured comet joins the dial as a diamond whose three-ray tail
+fans anti-sunward — solid when naked-eye bright, and honestly absent when
+the Minor Planet Center has dropped its elements.
 
 ![The Geocentric dial with both comet diamonds and their tails](CelestialDial-Comets.png)
 
@@ -65,7 +65,7 @@ of the soonest upcoming *visible* pass, the pass's arc dashed across it,
 with the satellite's dot swept live along that arc during the show and
 flipping between sunlit and in-shadow in step with the dome's marker:
 
-![The Next Visible Pass panel during a NOAA-21 pass](CelestialPassPanel-NOAA21-shadow-entry.gif)
+![The Next Visible Pass panel during a Tiangong pass](CelestialPassPanel-Tiangong-shadow-entry.gif)
 
 **Dark, light or following the sun** — the page ships as the night plate
 above, and takes a paper-atlas plate with `theme = light`, or `auto` to
@@ -105,23 +105,25 @@ weewx-skyfield is the atlas; weewx-celestial is the live instrument.
 
 ## Requirements
 
-**This extension requires Python 3.9 or later, WeeWX 5.2 or later,
+**This extension requires Python 3.9 or later, WeeWX 5.2 or later, and
 [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata) 7.0 or
-later, and (strongly recommended)
-[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) — 2.3.4
-or later, which this release is built against; 2.3.2 or later for the Next
-Visible Pass chart's dot to leave the chart when the pass ends; 2.1 or
-later for the comets, the meteor showers and the full countdown row; 2.0
-serves the sky dome's satellites and the pass chart itself; 1.15 or later
-for the light plate, which is the paper those charts are drawn on.**
+later.**
+
+[weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) is
+optional but is what the page is built for: without it you get the
+Geocentric dial on PyEphem's positions and nothing else — no sky dome, no
+pass chart, no comets, no meteor showers.  **If you run it, it must be 2.4
+or later**, which this release is pinned to; the installer refuses to
+install beside an older one.  Having none at all is not a refusal.
 
 ## Installing
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    7.0+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.3.5+, per their instructions.  (The installer refuses to run beside
-   an older weewx-loopdata: the page's live values reach it only through
-   7.0's per-report field declaration.)
+   2.4+, per their instructions.  (The installer refuses to run beside an
+   older weewx-loopdata, whose per-report field declaration is the only
+   way the page's live values reach it — and beside a weewx-skyfield
+   older than 2.4, which 9.1 is pinned to.)
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)

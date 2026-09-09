@@ -15,7 +15,7 @@ every loop packet.
 [Download weewx-celestial.zip](https://github.com/chaunceygardiner/weewx-celestial/releases/latest/download/weewx-celestial.zip){: .btn }
 [Report an issue](https://github.com/chaunceygardiner/weewx-celestial/issues){: .btn }
 
-This manual documents weewx-celestial **9.0.1**, the current release.
+This manual documents weewx-celestial **9.1**, the current release.
 
 ## Start here
 
@@ -37,7 +37,7 @@ This manual documents weewx-celestial **9.0.1**, the current release.
 ## What it is
 
 weewx-celestial adds one page to your WeeWX site: **the sky over your
-station as it stands this second**.  Where the sun, moon and eight planets
+station as it stands this second**.  Where the sun, moon and planets
 are — the compass bearing of each, how far away it is, whether it is up or
 below the horizon.  Which stars and constellations are overhead.  Which
 satellites are crossing right now, and when the next one will be bright
@@ -50,11 +50,11 @@ page you leave open, on which everything moves.
 
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
-chart.  Here it is entire, in the bundled sample report (Palo Alto, an
-August night at 10:58 PM — Saturn and Neptune newly up in the east and
-Pluto high in the south, everything else dashed below the horizon and
-trailing its wake, Proxima Centauri alone at the rim, and every odometer
-ticking):
+chart.  Here it is entire, in the bundled sample report (Palo Alto,
+midday on 8 September 2026 — the moon, the sun, Mercury, Venus, Mars and
+Jupiter above the horizon and trailing their wake, Uranus barely up,
+Saturn and Neptune dashed below, comet Halley riding among the planets,
+Proxima Centauri alone at the rim, and every odometer ticking):
 
 ![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
 
@@ -83,25 +83,26 @@ sunrise — loopdata expires the event and the page follows, no reload:
 
 ![The countdown row rolling through a sunset](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialCountdown-sunset-roll-2026-08-18.gif)
 
-**The Geocentric** — Earth at the center, every body (sun, moon, the
-eight planets, Proxima Centauri) placed by compass bearing and log
+**The Geocentric** — Earth at the center, every body (sun, moon,
+Mercury through Neptune, Proxima Centauri) placed by compass bearing and log
 distance, the moon at its true phase, bodies below the horizon dimmed and
 dashed, and an hour-long motion trail behind every dot.  Beside the dial,
 a roster gives each body an odometer distance readout that ticks between
 loop refreshes at the body's true radial rate (Mercury can recede ~28 km
 every second while Saturn approaches at the same pace), plus the raw
-astronomical-unit value and the current altitude.  With weewx-skyfield
-2.1, every configured comet joins the dial and roster (8.1): a diamond
+astronomical-unit value and the current altitude.  Every configured
+comet joins the dial and roster (8.1): a diamond
 placed like a planet, its tail fanning anti-sunward from the sun's own
 dial point, solid when naked-eye bright, hollow when fainter — and
 honestly absent when the Minor Planet Center has dropped the comet's
 elements.
 
-Both installer-default comets on the live dial — Halley in the
-north-west, Hale-Bopp due south, each a hollow diamond because both are
-far below naked-eye brightness, both dimmed and dashed for being under
-the horizon at this hour, their three-ray tails fanning away from the
-sun's own dial point — with their live roster rows below the planets':
+Both installer-default comets on the live dial — Halley to the west and
+up, at 35.8 astronomical units; Hale-Bopp further out at 50.9 and below
+the horizon, so dimmed and dashed.  Each is a hollow diamond, because
+both are far below naked-eye brightness, and each trails three rays
+fanning away from the sun's own dial point.  Their live roster rows sit
+below the planets', between Neptune and Proxima Centauri:
 
 ![The Geocentric dial with both comet diamonds and their tails](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDial-Comets.png)
 
@@ -113,7 +114,7 @@ open page steps to the one covering the current minute, while the
 sun/moon/planet marks are nudged between steps at loop-derived rates.  If
 the backdrops stop arriving, the dome freezes rather than moving its
 marks over a motionless star field, and says why.
-With weewx-skyfield 2.0's satellites configured, the dome carries the one
+With satellites configured, the dome carries the one
 thing up there that genuinely moves fast: the satellite marker crossing
 in real time — drawn whenever the satellite is up, dimmed unless you
 could actually see it (sunlit satellite, dark sky) — beside a roster of
@@ -145,13 +146,13 @@ while the visible-pass roster counts down beside it:
 
 ![The Next Visible Pass panel during the ISS pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-ISS-zenith.gif)
 
-And the live flip itself, captured August 10: NOAA-21 rises sunlit into
-the pre-dawn sky and drops into Earth's shadow at 48°, the sweep dot
-snapping from solid to the in-shadow ring mid-ride, in step with the
-dome's marker (the July 24 capture above predates the fix; its dot
-stays solid to the set):
+And the live flip itself, captured September 8: Tiangong rises sunlit
+in the west-northwest, peaks at 59° to the north-northeast and drops
+into Earth's shadow at 49°, the sweep dot snapping from solid to the
+in-shadow ring mid-ride, in step with the dome's marker (the July 24
+capture above predates the fix; its dot stays solid to the set):
 
-![The Next Visible Pass panel during a NOAA-21 pass, the sweep dot flipping to the in-shadow ring mid-ride](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-NOAA21-shadow-entry.gif)
+![The Next Visible Pass panel during a Tiangong pass, the sweep dot flipping to the in-shadow ring mid-ride](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-Tiangong-shadow-entry.gif)
 
 Everything on the page moves.  The dial and roster update from
 `loop-data.txt` on every loop record (for the Vantage driver, every 2
@@ -210,7 +211,7 @@ What installs:
 
 The rosters first-paint at report time from `$almanac` and then go live
 from loop data, so what you see depends on the almanac WeeWX has — with
-weewx-skyfield 2.3.4 everything, and less at each tier below it, down to
+weewx-skyfield 2.4 everything, and less at each tier below it, down to
 the built-in almanac, which serves none of the positions the Celestial page runs
 on.  The full table is under
 [the almanac tiers](configuration.md#the-almanac-tiers), and the
@@ -231,10 +232,10 @@ report-time snapshot); weewx-celestial is the live instrument, and as of
 - [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
   7.0 or later (the installer checks)
 - [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-  strongly recommended (required for Proxima Centauri; 2.0 or later
-  required for the sky dome's satellites and the Next Visible Pass
-  chart; 2.1 or later for the comets, the meteor showers and the full
-  countdown row; 2.3.2 or later for the pass chart's dot to leave the
-  chart when the pass ends; 2.3.4 or later for the panels beside the
-  dome to settle their state without drawing one; 1.15 or later for the
-  light plate, which is the paper its charts are drawn on), or PyEphem
+  **2.4 or later** if you run it at all — 9.1 is pinned to it and the
+  installer refuses an older one.  It is what the sky dome, the Next
+  Visible Pass chart, the comets, the meteor showers, the full countdown
+  row and Proxima Centauri all come from, so without it the page is the
+  Geocentric dial alone, on PyEphem's positions; on WeeWX's built-in
+  almanac the panels show install hints instead.  Having none is not a
+  refusal.
