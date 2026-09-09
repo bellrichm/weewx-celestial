@@ -20,12 +20,14 @@ separately.
 1. Install [weewx-loopdata](https://chaunceygardiner.github.io/weewx-loopdata/)
    7.0 or later and
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.3.5 or later, both per their instructions, in that order.
+   2.4 or later, both per their instructions, in that order.
    weewx-loopdata **must** come first: this extension's installer refuses
    to run beside an older weewx-loopdata, or none, because the page's
    live values reach it only through 7.0's per-report field declaration
    (below), and an older weewx-loopdata never reads one — the page would
-   say `BAD DATA` for ever with nothing in any log to explain it.
+   say `BAD DATA` for ever with nothing in any log to explain it.  It
+   refuses a weewx-skyfield older than 2.4 as well, which 9.1 is pinned
+   to; having no weewx-skyfield at all is not a refusal.
    weewx-skyfield's installer configures its default satellites — the ISS
    and Tiangong — and its default comets — Halley and Hale-Bopp — which
    is what this extension's installer declares fields for when it finds
@@ -196,5 +198,5 @@ distance odometers should be ticking.  Rates and motion trails need two
 loop packets, so they appear one refresh cycle after load — a static
 first few seconds is by design.
 
-If any of that misbehaves, every symptom the page can show is catalogued
+If any of that misbehaves, every symptom the page can show is cataloged
 in [Reading the page](reading-the-page.md#the-header-and-the-badge-that-tells-the-truth).

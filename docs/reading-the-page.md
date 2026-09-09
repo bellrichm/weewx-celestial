@@ -152,8 +152,8 @@ On the dial:
 - **Every mark answers a tap**: touch or hover it for its name, live
   altitude and live distance.
 
-Configured comets ride the same dial, drawn as **diamonds** between Pluto
-and Proxima in the roster order:
+Configured comets ride the same dial, drawn as **diamonds** between
+Neptune and Proxima in the roster order:
 
 - The three-ray **tail fans away from the sun's own dial point** —
   anti-sunward, as a real comet's tail points.
@@ -212,7 +212,7 @@ there that genuinely moves fast.  A satellite marker is:
   out.
 - **Dimmed** whenever your sky is too bright for it to be visible anyway.
 
-![The sky dome as NOAA-21 enters Earth's shadow](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDome-NOAA21-shadow-entry.gif)
+![The sky dome as Tiangong enters Earth's shadow](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialDome-Tiangong-shadow-entry.gif)
 
 Beside the dome, the **next pass overhead** roster gives every configured
 satellite a row counting down to its next pass of *any* kind, tagged
@@ -245,11 +245,10 @@ satellite on it.  A page opened in that gap comes up the same way once
 its first loop packet lands, normally a second or two after it loads:
 until then the chart stands exactly as the station drew it, dot
 included, and it keeps standing that way for as long as the loop feed is
-down.  The
-page reads the pass's own rise and set from the chart, which needs
-weewx-skyfield 2.3.2 or later.
+down.  The page reads the pass's own rise and set from the chart
+itself.
 
-![The Next Visible Pass panel during a NOAA-21 pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-NOAA21-shadow-entry.gif)
+![The Next Visible Pass panel during a Tiangong pass](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialPassPanel-Tiangong-shadow-entry.gif)
 
 The chart refetches every five minutes and rolls over to the next pass by
 itself.  When no configured satellite has a visible pass inside its

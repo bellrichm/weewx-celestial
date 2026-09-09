@@ -44,7 +44,7 @@ Two things landed this month that were preconditions:
   global fields line; now a consumer report can declare exactly the
   groups a panel needs and get its own entry, in its own language.  That
   is the data leg of a drop-in, and it exists.
-- **8.3.4-8.4** settled the behaviour that was still moving: one clock
+- **8.3.4-8.4** settled the behavior that was still moving: one clock
   (the loop packet's own timestamp), the dome slot walk's three guards,
   the stateless pass render.  The javascript has stopped churning, which
   is when it becomes worth freezing behind an interface.

@@ -23,6 +23,17 @@ skin changes, and no file has to be deleted.  Reload any page you have
 open: the javascript is served with the version in its URL, so a browser
 holding the previous release's copy takes the new one on the next load.
 
+9.1 takes Pluto off the Geocentric dial, so the dial ends at Neptune
+before the jump to Proxima Centauri and the roster loses a row.  The
+bundled skin needs nothing from you: it ships its own field declaration
+and that file is replaced on upgrade, so the three `almanac.pluto.*`
+entries simply stop being requested.  A skin of your own that pasted
+that declaration into its `skin.conf` keeps a dead `pluto` group until
+you delete the line; nothing breaks meanwhile.  Pluto is still a
+reserved tag: every almanac serves `almanac.pluto.*`, so a satellite or
+comet may not be named after it, and a page of your own may still read
+those fields by declaring them itself.
+
 9.0.1 changes where the `LIVE` badge gets its number.  The age of the
 record on show is now read from the clock of the machine that served it
 — the `Date` header of the response that carried the record — rather
@@ -79,15 +90,11 @@ the page — static, with `celestial is not defined` in the browser
 console and nothing in the WeeWX log — never goes live either.  Add
 `celestial.js` to it, or drop the line.
 
-Upgrade **weewx-skyfield to 2.3.5** while you are here, if you run it.
-Neither release is required.  From **2.3.4** the panels beside the sky
-dome — the two satellite rosters and the Next Visible Pass — can ask
-whether there is a sky to draw without drawing one; 9.0 asks an older
-weewx-skyfield the way it always has, by drawing the dome.  **2.3.5**
-adds nothing this page uses, but it is a better install: it says what it
-is downloading while it downloads, and it leaves alone any orbital
-elements your station already has and that are still current, so an
-upgrade over a running station usually makes no network request at all.
+Upgrade **weewx-skyfield to 2.4** before you upgrade this: 9.1 is pinned
+to it and the installer refuses an older one.  On 2.3.x the Next Visible
+Pass dot would stand as drawn through a pass instead of going hollow in
+the earth's shadow, and the light theme's accent would disagree with the
+charts'.  Having no weewx-skyfield at all is not a refusal.
 
 Two things you may see on the page after the upgrade, both of them the
 page reporting configuration rather than anything broken:
@@ -204,7 +211,7 @@ this extension ships always carries it.
 when the pass ends, instead of jumping back to mid-arc.  The fix reads
 the pass's own rise and set from the chart, which **weewx-skyfield
 2.3.2** writes there; on an older weewx-skyfield the chart carries no
-times and the page keeps 8.3.2's window judgement — the dot returns
+times and the page keeps 8.3.2's window judgment — the dot returns
 to its drawn place at set.  Upgrade both.
 
 8.3 adds the light plate.  Nothing moves on your page: `theme` defaults
@@ -241,12 +248,11 @@ chips and the comets (8.1) included — the fixed ones from the skin, the
 satellite and comet ones written by the installer for your `[Skyfield]`
 sets.  Your old fields line is neither needed nor touched.
 
-Run weewx-skyfield 2.3.5 — 2.1 brought the comets and the
-shower/supermoon chips, 2.3.2 the pass chart's own rise and set that
-lets its dot leave the chart when the pass ends, and 2.3.4 the
-`can_draw()` answer the panels beside the dome now stand on; 2.0 still
-serves the satellites, and the sunset, darkness and pass chips count on
-any of them.
+Run weewx-skyfield 2.4: 9.1 is pinned to it and the installer refuses an
+older one.  It is what serves the sky dome, the satellite layer, the Next
+Visible Pass chart, the comets and the shower and supermoon chips — the
+sunset, darkness and pass chips are the page's own arithmetic and count
+without it.
 An almanac that cannot serve a field omits it, and the page simply hides
 that layer or chip.
 
@@ -307,7 +313,7 @@ that through 8.4; it is gone).  The sequence:
 
 1. **Upgrade weewx-loopdata to 7.0 or later** (and install
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.3.5+ if you have not already).  This extension's installer refuses
+   2.4+ if you have not already).  This extension's installer refuses
    to run beside an older weewx-loopdata, so do it first — before the
    uninstall below leaves you without a page.
 

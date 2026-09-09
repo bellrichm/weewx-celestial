@@ -185,9 +185,9 @@ next report cycle.
 
 ## The sky dome, the satellites and the Next Visible Pass panel
 
-The dome and the Next Visible Pass chart are drawn by weewx-skyfield (2.0 or
-later) and embedded through a guarded search list, so a lesser almanac
-costs panels, never the page.  There is nothing to configure in this
+The dome and the Next Visible Pass chart are drawn by weewx-skyfield and
+embedded through a guarded search list, so a lesser almanac costs panels,
+never the page.  There is nothing to configure in this
 skin for them; what they show follows weewx-skyfield's own
 configuration:
 
@@ -266,29 +266,22 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.3.4** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
-| **weewx-skyfield 2.3.2** or 2.3.3 | The same page.  2.3.4 adds one thing this skin uses: a way to ask whether the sky can be drawn at all without drawing it, so the panels beside the dome — the two rosters and the Next Visible Pass — settle their state without a dome render.  On an older weewx-skyfield the page asks the way it always has, by drawing the dome |
-| **weewx-skyfield 2.1** | Everything but the pass chart's dot leaving the chart when the pass ends — the chart states its own rise and set only from 2.3.2, so the page falls back to the loop feed's window and the dot returns to its drawn place at set |
-| **weewx-skyfield 2.0** | Everything but the comets and the shower/supermoon chips (the sunset, darkness and pass chips still count) |
-| **weewx-skyfield** (earlier) | Everything but the satellites and their chart; the dome's sun/moon/planet marks step only at the backdrop step (the live-nudge hooks are 2.0's) |
+| **weewx-skyfield 2.4** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.4**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |
 
-2.2 adds nothing to that top row — no new fields, no new marks — but the
-dome and the Next Visible Pass chart carry their colors inside the SVG
-this skin embeds, so upgrading to it is what makes their altitude rings and
-meridian cross visible.  It is also where the dome's Mars comes up to meet
-the dial's: celestial 8.2 lifts its own Mars dot, and until 2.2 is
-installed the embedded dome still draws the darker one.  The half of that
-pass which lives in this skin's own stylesheet (the star and constellation
-names) ships in celestial 8.2 and applies at any weewx-skyfield version.
+**Older than 2.4 is not a tier.**  9.1 is pinned to weewx-skyfield 2.4 and
+the installer refuses an older one, naming the version it found: the light
+plate's brass is 2.4's value, and the Next Visible Pass chart's sunlit dot
+flips by exchanging the role classes 2.4 introduced, so on an older chart it
+would simply stand as drawn through a pass.  Having no weewx-skyfield at all
+is not a refusal — that is the PyEphem or built-in row above.
 
 The plate follows the same shape.  `theme` is read by weewx-skyfield, and
-the light plate is the paper its charts are drawn on, so **1.15 or later**
-is what makes the option do anything: below that — and on the PyEphem and
-built-in tiers, where there are no charts at all — the page stays dark
-whatever the option says, quietly, since there is no way to tell an old
-installation from one that never asked.
+the light plate is the paper its charts are drawn on: on the PyEphem and
+built-in tiers, where there are no charts at all, the page stays dark
+whatever the option says.
 
 The footer credit is generated truthfully for whichever almanac actually
 serves the page.

@@ -174,10 +174,10 @@ PER_AU_MILE = 9.2955807e7
 
 # The Geocentric roster's bodies, nearest tier first: moon and sun, the
 # planets in orbital order, Proxima Centauri last (the configured comets
-# join between Pluto and Proxima at render time).  celestial.js carries
+# join between Neptune and Proxima at render time).  celestial.js carries
 # the same list as its GEO_BODIES; a test pins the two.
 GEO_BODIES = ('moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter', 'saturn',
-              'uranus', 'neptune', 'pluto', 'proxima_centauri')
+              'uranus', 'neptune', 'proxima_centauri')
 
 # The bodies whose display names the javascript composes with (dial
 # labels and tooltips), from the report's [Almanac] section: the
@@ -1129,7 +1129,7 @@ class CelestialPage:
         label so the row never overflows.  The value cells share their
         [Texts] keys with the javascript, so first paint and live
         updates always agree.  The configured comets join the roster
-        between Pluto and Proxima -- the roster reads nearest-tier
+        between Neptune and Proxima -- the roster reads nearest-tier
         outward, and a comet at tens of au belongs among the planets,
         not past the stellar rim -- same row anatomy, the shared brass
         comet chip (comet tags are dynamic, so per-tag color classes

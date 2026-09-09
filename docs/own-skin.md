@@ -61,7 +61,7 @@ weewx-loopdata under your report's name** (weewx-loopdata 7.0 or later).
 The declaration comes in two halves, exactly as it does for the bundled
 skin.
 
-**The fields that never change** — the clock, the eleven bodies, the
+**The fields that never change** — the clock, the ten bodies, the
 countdown events — you paste into your own `skin.conf`, from
 [the shipped declaration](fields-reference.md#the-shipped-declaration):
 
@@ -673,11 +673,21 @@ to any live page:
   Read `$almanac.__dict__.get('texts', {})` instead.  The same shape
   lurks wherever an optional almanac attribute is probed: test the
   *value*, never the success of the attribute access.
-- **A baked-in palette cannot have a browser toggle.**  Server-drawn SVG
-  arrives with its colors inside it, and any class you add to it is undone
-  the moment the page refetches it.  Resolve the theme where the drawing
-  happens — at generation time, into a class on the root element, with
-  every refetched fragment on the same palette as the page.
+- **Resolve the theme where the drawing happens.**  Server-drawn SVG
+  arrives with its colors inside it, and any class you add to the elements
+  is undone the moment the page refetches the fragment.  So settle the
+  plate at generation time, into a class on the root element, with every
+  refetched fragment on the same palette as the page — which is what this
+  skin does.
+
+  From weewx-skyfield 2.4 there is a second option, because each mark
+  carries a `sky-fill-<role>` / `sky-stroke-<role>` class whose default
+  sits inside the fragment at zero specificity.  A rule in *your*
+  stylesheet outranks that default and survives a refetch, since it lives
+  in your sheet rather than on the element — so a consumer that wants a
+  reader-driven light/dark switch can repaint the marks itself.  This skin
+  does not: it ships no `.sky-*` rule at all, which is what leaves those
+  classes free for you.
 
 ## Live in the wild
 

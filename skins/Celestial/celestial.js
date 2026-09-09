@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.0.1';
+  var CELESTIAL_JS_VERSION = '9.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -277,7 +277,7 @@ var celestial = (function () {
   // other almanac.
   var GEO_BODIES = [
     'moon', 'sun', 'mercury', 'venus', 'mars', 'jupiter',
-    'saturn', 'uranus', 'neptune', 'pluto', 'proxima_centauri'
+    'saturn', 'uranus', 'neptune', 'proxima_centauri'
   ];
   var AU_PER_LY = 63241.077;          // au per light year, for Proxima's label
   // Dial geometry: azimuth is the compass bearing (plan view, east right);
@@ -349,7 +349,7 @@ var celestial = (function () {
     // discs that bury the dial.
     // The grid is deliberately recessive: 2.05:1 inside 10 au, 1.74
     // outside, both short of the 3:1 a graphical object wants.  That is a
-    // judgement, not an oversight.  The rings are not what carries the
+    // judgment, not an oversight.  The rings are not what carries the
     // scale -- the au label beside each one is at 5.78:1 and does not move
     // -- and a dial stops reading as a dial when its armature competes
     // with the dots.  Read as contrast ratio the lift over 8.1 looks
@@ -430,7 +430,7 @@ var celestial = (function () {
       m.title = svgEl('title', {}, g, m.label);
       var rayOpacity = ['0.55', '0.9', '0.55'];
       for (var ri = 0; ri < 3; ri++) {
-        m.rays.push(svgEl('line', {'class': 'comet-tail',
+        m.rays.push(svgEl('line', {'class': 'cel-comet-tail',
                                    'stroke-width': 1.2,
                                    'stroke-opacity': rayOpacity[ri],
                                    display: 'none'}, g));
@@ -1845,7 +1845,7 @@ var celestial = (function () {
       // that comes back 404, and it must COUNT as having asked:
       // otherwise domeChecked stays false for the life of the page, the
       // freeze never engages and no line ever posts, which is silently
-      // the behaviour this release replaced.
+      // the behavior this release replaced.
       domeFetchInFlight = false;
       domeChecked = true;
       domeFetchProblem = {kind: 'net', file: fragName};
@@ -1956,7 +1956,7 @@ var celestial = (function () {
     // entirely -- a kiosk with no NTP can be an hour out, and judging by
     // it would freeze a perfectly healthy sky and post a frozen line
     // over it.  Before the first packet serverNow is GEN_TS, the very
-    // stamp the baked backdrop carries, so the judgement is undecidable
+    // stamp the baked backdrop carries, so the judgment is undecidable
     // and answers "current" (8.3.4 let the browser's clock decide here,
     // the one place it still could); the first packet's refetch corrects
     // a stale-cached page, and the first packet judges.  A page that
@@ -2108,7 +2108,7 @@ var celestial = (function () {
     // clock, which moves only with a loop packet -- so a page that has
     // never received one cannot call its backdrop stale (GEN_TS never
     // gets ahead of a backdrop's stamp), and a feed that dies freezes
-    // this judgement with it.  In both the LIVE badge names the fault,
+    // this judgment with it.  In both the LIVE badge names the fault,
     // and it is the instrument that owns it.  The tick is for the fetch
     // outcomes and the wake grace, which do not depend on the clock, and
     // the line repaints only on a change.
@@ -2177,11 +2177,11 @@ var celestial = (function () {
     // baseline is the dot's generated position, exactly the dome-mark
     // pattern.  tag stays null when the chart lacks the hooks (an older
     // skyfield): nothing sweeps, the chart stands as drawn.  The
-    // baseline also records the dot's generated look -- fill, stroke,
-    // and the data-sunlit hook's verdict -- so the sweep can flip and
-    // restore it (passDotLit below) -- and the pass's OWN window,
-    // data-rise/data-set on the track (skyfield 2.3.2), null on an
-    // older chart.
+    // baseline also records the dot's generated look -- its fill and
+    // stroke, however the chart paints them, and the data-sunlit hook's
+    // verdict -- so the sweep can flip and restore it (passDotLit below)
+    // -- and the pass's OWN window, data-rise/data-set on the track
+    // (skyfield 2.3.2), null on an older chart.
     passBase = {tag: null};
     var svg = passSvg();
     if (svg === null) {
@@ -2202,8 +2202,8 @@ var celestial = (function () {
                 lab: svg.querySelector('text[data-body="' + tag + '"]'),
                 x: parseFloat(c.getAttribute('cx')),
                 y: parseFloat(c.getAttribute('cy')),
-                fill: c.getAttribute('fill'),
-                stroke: c.getAttribute('stroke'),
+                cls: c.getAttribute('class'),
+                clsSwap: skyPairSwap(c.getAttribute('class')),
                 genLit: ds === null ? null : ds !== '0',
                 // Freshly read from the chart, so it IS as the station
                 // drew it: see passStandsAsDrawn, which restores that
@@ -2211,6 +2211,51 @@ var celestial = (function () {
                 asDrawn: true,
                 rise: attrNum(track, 'data-rise'),
                 set: attrNum(track, 'data-set')};
+  }
+  function skyPairSwap(cls) {
+    // The inversion of a weewx-skyfield 2.4 mark's class pair.
+    //
+    // The chart paints a sunlit satellite `sky-fill-<a> sky-stroke-<b>`
+    // and a shadowed one with the two roles exchanged, so exchanging
+    // them here is the CLASS form of swapping the fill/stroke ATTRIBUTES
+    // 2.3.x wrote -- still no knowledge of skyfield's palette, which is
+    // the whole point of reading the drawn look rather than naming
+    // colors.  Other classes on the mark are preserved in place, and
+    // null comes back when there is no such pair: a 2.3.x chart (which
+    // paints with attributes) or a hand-made one.
+    //
+    // Exchanging the names is safe because 2.4's `_style_block` emits a
+    // default for every role a chart uses AND for that role's partner in
+    // the other paint channel, so the class this names always resolves.
+    // It did not always: 2.4 as first written emitted only the roles a
+    // chart had used, and a sunlit dot's chart carried no
+    // `.sky-fill-halo` rule, so the swapped mark fell back to the SVG
+    // initial black -- invisible on the night plate, a solid black disc
+    // where a hollow white ring belongs on the light one.  Keeping the
+    // exchange here rather than writing a resolved color inline is what
+    // lets a consumer restyle this mark along with every other one.
+    if (cls === null) {
+      return null;
+    }
+    var toks = cls.trim().split(/\s+/), fill = null, stroke = null, i;
+    for (i = 0; i < toks.length; i++) {
+      if (toks[i].indexOf('sky-fill-') === 0) {
+        fill = toks[i].substring('sky-fill-'.length);
+      } else if (toks[i].indexOf('sky-stroke-') === 0) {
+        stroke = toks[i].substring('sky-stroke-'.length);
+      }
+    }
+    if (fill === null || stroke === null) {
+      return null;
+    }
+    for (i = 0; i < toks.length; i++) {
+      if (toks[i].indexOf('sky-fill-') === 0) {
+        toks[i] = 'sky-fill-' + stroke;
+      } else if (toks[i].indexOf('sky-stroke-') === 0) {
+        toks[i] = 'sky-stroke-' + fill;
+      }
+    }
+    return toks.join(' ');
   }
   function attrNum(el, name) {
     // A numeric attribute, or null when absent or not a number.
@@ -2278,21 +2323,29 @@ var celestial = (function () {
   }
   function passDotLit(b, lit) {
     // Solid vs hollow ring on the chart's dot.  The generator draws a
-    // shadowed satellite as the exact fill/stroke inversion of a sunlit
-    // one, so the two looks are the recorded generated pair and its
-    // swap -- no color knowledge of skyfield's chart palette needed,
-    // and no CSS coupling.  Without the data-sunlit hook (an older
-    // chart) the dot stands as drawn.
-    if (b.genLit === null || b.fill === null || b.stroke === null) {
+    // shadowed satellite as the exact inversion of a sunlit one, so the
+    // two looks are the drawn class pair and that pair exchanged -- no
+    // color knowledge of skyfield's palette, and no CSS coupling.
+    //
+    // Single path since 9.1 pinned this skin to weewx-skyfield 2.4:
+    // 2.3.x painted its marks with fill/stroke ATTRIBUTES and needed a
+    // second branch to swap those, and that branch is gone with the
+    // versions it served.  What makes the exchange resolve is 2.4
+    // emitting a default for every role a chart uses AND for that
+    // role's partner in the other channel; pinned by
+    // test_skyfield_emits_partner_defaults.
+    //
+    // Writing the class rather than a resolved color is deliberate: a
+    // class loses to a stylesheet rule, so a host skin restyling
+    // `.sky-fill-brass` repaints this dot along with every other mark
+    // on the chart.  Inline style would outrank it and would not.
+    if (b.genLit === null) {
       return;
     }
-    if (lit === b.genLit) {
-      b.c.setAttribute('fill', b.fill);
-      b.c.setAttribute('stroke', b.stroke);
-    } else {
-      b.c.setAttribute('fill', b.stroke);
-      b.c.setAttribute('stroke', b.fill);
+    if (b.clsSwap === null) {
+      return;                  // no role-class pair: the dot stands as drawn
     }
+    b.c.setAttribute('class', lit === b.genLit ? b.cls : b.clsSwap);
   }
   function renderPass() {
     if (passSvg() === null) {
@@ -2913,7 +2966,7 @@ var celestial = (function () {
     // packets arrive (see serverNow), and 8.3.4's header clock is gone
     // -- read from the station it was that stamp shown twice.  (Two
     // things below do READ the clock every second -- the pass chart's
-    // over/ahead verdict and the dome-stale judgement -- but between two
+    // over/ahead verdict and the dome-stale judgment -- but between two
     // packets it does not move, so they paint nothing new.)
     //
     // The backdrop's health goes stale on its own schedule, whatever the
@@ -3016,7 +3069,7 @@ var celestial = (function () {
         // Stamped by the browser, for the one question that must not
         // cross clocks: has the feed stopped arriving HERE?  latestTs is
         // the station's own time and belongs to the backdrop-age
-        // judgement; comparing it against Date.now() would make an
+        // judgment; comparing it against Date.now() would make an
         // ordinary two-minute clock skew look exactly like a dead feed.
         //
         // Only when the packet is NEW, though.  The commonest way a feed
@@ -3024,7 +3077,7 @@ var celestial = (function () {
         // the web server goes on serving the last file, so every poll is
         // a 200 carrying the same stale json.  Stamping those would keep
         // this clock fresh for ever while the station's clock -- and with
-        // it the backdrop-age judgement, which reads latestTs -- froze:
+        // it the backdrop-age judgment, which reads latestTs -- froze:
         // both restore paths dead at once, and the plate left showing a
         // current star field wearing hour-old bodies.  A repeat of the
         // same packet is not news.

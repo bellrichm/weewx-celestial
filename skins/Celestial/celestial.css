@@ -47,9 +47,8 @@
   --skylab:#9FA5C4; --conlab:#9DABD7;
   /* Per-body identity colors (weewx-skyfield's night-plate values --
    * the traditional astronomy scheme: yellow sun, silver moon, gray
-   * Mercury, pearly Venus; pluto is celestial's own addition -- the Sky
-   * palette has no night pluto).  Earth (the dial's center) and Proxima
-   * (silver, like the stars) are celestial's own as well.  Mars follows
+   * Mercury, pearly Venus).  Earth (the dial's center) and Proxima
+   * (silver, like the stars) are celestial's own.  Mars follows
    * skyfield 2.2's lift (was #C04F36, the one body dot under 3:1 on the
    * night dome): the embedded dome emits its dot color inline, so the two
    * agree from 2.2 on.  On a station still running 2.1 the dome keeps the
@@ -58,7 +57,7 @@
    * value skyfield has already retired. */
   --c-sun:#FFD75E; --c-moon:#C9D0DA; --c-mercury:#9CA0AC; --c-venus:#F0E3BE;
   --c-mars:#CE6750; --c-jupiter:#D89A56; --c-saturn:#AC8F3E;
-  --c-uranus:#35A8BE; --c-neptune:#5F85E6; --c-pluto:#8A7FB0;
+  --c-uranus:#35A8BE; --c-neptune:#5F85E6;
   --c-earth:#7FB4A2; --c-proxima:#C9D0DA;
   /* The halo: the color a mark is outlined in so it stays separate from
    * whatever it sits on, and the fill of the hollow inversions (a
@@ -66,6 +65,18 @@
    * carry it under the same name; on the night plate it is the page
    * black, which is why this was spelled --night through 8.2. */
   --halo:#0A0F22;
+  /* The three marks whose treatment DIFFERS IN KIND between the
+   * plates, carried as tokens so a panel on its own plate inside a
+   * page of the other still gets its own.  A custom property
+   * resolves from the nearest ancestor that sets it, so the panel's
+   * own theme class answers; a `.theme-light .cel-x` rule could not,
+   * because a descendant selector matches on ANCESTRY ALONE and the
+   * page would win however close the panel sat.  --chip-ring carries
+   * the on/off, not a color: on night the chips wear no ring at all. */
+  --chip-ring:0;
+  --geo-ring-sun:var(--halo); --geo-ring-venus:var(--halo);
+  --moon-dark:#1E2745; --moon-lit:#DDD8C4;
+  --moon-rim:var(--c-moon); --moon-rim-op:.55;
   /* The three pale bodies need no edge on the night plate: their own
    * color IS the bright mark.  On paper they do -- see the light block. */
   --e-sun:#FFD75E; --e-moon:#C9D0DA; --e-venus:#F0E3BE; --e-earth:#7FB4A2;
@@ -97,20 +108,28 @@
  * value is skyfield's, and a test keeps it that way. */
 .theme-light, .theme-dark .domefrag[data-dome-palette="light"] svg, .theme-dark .passfrag[data-pass-palette="light"] svg, :root:not(.theme-light) .domefrag[data-dome-palette="light"] svg, :root:not(.theme-light) .passfrag[data-pass-palette="light"] svg{
   --night:#EFECE2; --vault:#FFFFFF; --ink:#1D2C4E; --muted:#5C6672;
-  --brass:#B45309; --line:#C9CFD8; --grid:#7A899F;
+  --brass:#A44A08; --line:#C9CFD8; --grid:#7A899F;
   /* The paper plate hands the ring and star labels straight back to
    * --muted (sky.css's light rule), and the constellation names their
    * own value. */
   --skylab:var(--muted); --conlab:#57637B;
   --c-sun:#FACC15; --c-moon:#D6DAE0; --c-mercury:#52525B; --c-venus:#F0E4BE;
   --c-mars:#B23A24; --c-jupiter:#B06F2E; --c-saturn:#8F7524;
-  --c-uranus:#20808F; --c-neptune:#3A63C4; --c-pluto:#6A5F96;
+  --c-uranus:#20808F; --c-neptune:#3A63C4;
   --c-earth:#2E7D64;
   /* Proxima wears the stars' silver, which on paper is the light plate's
    * moon RING (#767E8A) -- its moon fill (#D6DAE0) is a 1.40:1 ghost on
    * white, and a star that cannot be seen is not a star. */
   --c-proxima:#767E8A;
   --halo:#FFFFFF;
+  /* The paper plate's versions of the three: the chips take an inset
+   * ring, the pale bodies' dial dots take their edge color instead of
+   * a white halo that would outline them in nothing, and the moon's
+   * rim goes full strength because its lit limb is nearly the page. */
+  --chip-ring:1.5px;
+  --geo-ring-sun:var(--e-sun); --geo-ring-venus:var(--e-venus);
+  --moon-dark:#26314F; --moon-lit:#F2ECD8;
+  --moon-rim:#888888; --moon-rim-op:1;
   /* Pale on paper: sun 1.53:1, moon 1.40, venus 1.27 against the white
    * panel -- as fills they are nearly not there.  skyfield's light
    * palette answers this with a `ring` per pale body, a darker edge in
@@ -198,20 +217,20 @@
 .cel-chip-mercury{background:var(--c-mercury)} .cel-chip-venus{background:var(--c-venus)}
 .cel-chip-mars{background:var(--c-mars)} .cel-chip-jupiter{background:var(--c-jupiter)}
 .cel-chip-saturn{background:var(--c-saturn)} .cel-chip-uranus{background:var(--c-uranus)}
-.cel-chip-neptune{background:var(--c-neptune)} .cel-chip-pluto{background:var(--c-pluto)}
+.cel-chip-neptune{background:var(--c-neptune)}
 .cel-chip-proxima_centauri{background:var(--c-proxima)}
 .cel-fill-sun{fill:var(--c-sun)} .cel-fill-moon{fill:var(--c-moon)}
 .cel-fill-mercury{fill:var(--c-mercury)} .cel-fill-venus{fill:var(--c-venus)}
 .cel-fill-mars{fill:var(--c-mars)} .cel-fill-jupiter{fill:var(--c-jupiter)}
 .cel-fill-saturn{fill:var(--c-saturn)} .cel-fill-uranus{fill:var(--c-uranus)}
-.cel-fill-neptune{fill:var(--c-neptune)} .cel-fill-pluto{fill:var(--c-pluto)}
+.cel-fill-neptune{fill:var(--c-neptune)}
 .cel-fill-proxima_centauri{fill:var(--c-proxima)}
 .cel-fill-earth{fill:var(--c-earth)}
-.cel-stroke-sun{stroke:var(--c-sun)} .cel-stroke-moon{stroke:var(--c-moon)}
-.cel-stroke-mercury{stroke:var(--c-mercury)} .cel-stroke-venus{stroke:var(--c-venus)}
+.cel-stroke-sun{stroke:var(--e-sun)} .cel-stroke-moon{stroke:var(--e-moon)}
+.cel-stroke-mercury{stroke:var(--c-mercury)} .cel-stroke-venus{stroke:var(--e-venus)}
 .cel-stroke-mars{stroke:var(--c-mars)} .cel-stroke-jupiter{stroke:var(--c-jupiter)}
 .cel-stroke-saturn{stroke:var(--c-saturn)} .cel-stroke-uranus{stroke:var(--c-uranus)}
-.cel-stroke-neptune{stroke:var(--c-neptune)} .cel-stroke-pluto{stroke:var(--c-pluto)}
+.cel-stroke-neptune{stroke:var(--c-neptune)}
 .cel-stroke-proxima_centauri{stroke:var(--c-proxima)}
 /* On paper the sun, moon and Venus cannot carry their own mark (1.53,
  * 1.40, 1.27:1 as fills on white), so every EDGE they draw switches to
@@ -221,12 +240,9 @@
  * outlines take it as their stroke.  The night plate needs none of
  * this, so --e-* there is just the body color and these rules are the
  * only place the two plates diverge in kind rather than in value. */
-.theme-light .cel-chip-sun{box-shadow:inset 0 0 0 1.5px var(--e-sun)}
-.theme-light .cel-chip-moon{box-shadow:inset 0 0 0 1.5px var(--e-moon)}
-.theme-light .cel-chip-venus{box-shadow:inset 0 0 0 1.5px var(--e-venus)}
-.theme-light .cel-stroke-sun{stroke:var(--e-sun)}
-.theme-light .cel-stroke-moon{stroke:var(--e-moon)}
-.theme-light .cel-stroke-venus{stroke:var(--e-venus)}
+.cel-chip-sun{box-shadow:inset 0 0 0 var(--chip-ring) var(--e-sun)}
+.cel-chip-moon{box-shadow:inset 0 0 0 var(--chip-ring) var(--e-moon)}
+.cel-chip-venus{box-shadow:inset 0 0 0 var(--chip-ring) var(--e-venus)}
 
 /* The dial's static furniture.  The per-ring stroke-opacity (0.5 inside
  * 10 au, 0.4 outside) is set by the javascript, which draws them.  The
@@ -255,19 +271,15 @@
  * in nothing; sun and Venus take their edge instead.  (The moon's dial
  * mark is the phase disc below, not a dot, and Proxima's light silver
  * already reads at 4.10:1.) */
-.theme-light .cel-geodot.cel-ring.cel-fill-sun{stroke:var(--e-sun)}
-.theme-light .cel-geodot.cel-ring.cel-fill-venus{stroke:var(--e-venus)}
+.cel-geodot.cel-ring.cel-fill-sun{stroke:var(--geo-ring-sun)}
+.cel-geodot.cel-ring.cel-fill-venus{stroke:var(--geo-ring-venus)}
 .cel-geodot.cel-below{fill-opacity:.45; stroke-width:1.5; stroke-dasharray:2.5 2.5}
 .cel-sunglow{filter:blur(6px); opacity:.55}
 /* The moon's true-phase disc, silver-rimmed so a new moon never vanishes. */
-.cel-moon-dark{fill:#1E2745}
-.cel-moon-lit{fill:#DDD8C4}
-.theme-light .cel-moon-dark{fill:#26314F}
-.theme-light .cel-moon-lit{fill:#F2ECD8}
-.cel-moon-rim{fill:none; stroke:var(--c-moon); stroke-opacity:.55; stroke-width:1}
-/* The paper plate's moon_ring: the lit limb is nearly the page, so the
- * rim is what draws the disc at all, and it goes full strength. */
-.theme-light .cel-moon-rim{stroke:#888888; stroke-opacity:1}
+.cel-moon-dark{fill:var(--moon-dark)}
+.cel-moon-lit{fill:var(--moon-lit)}
+.cel-moon-rim{fill:none; stroke:var(--moon-rim); stroke-opacity:var(--moon-rim-op);
+              stroke-width:1}
 .cel-geomoon.cel-below{opacity:.55}
 .cel-geomoon.cel-below .cel-moon-rim{stroke-dasharray:2.5 2.5; stroke-opacity:.7}
 /* Motion trails: per-segment opacity is set by the javascript, which ramps
@@ -282,8 +294,8 @@
 .cel-cometdot{fill:var(--brass); stroke:var(--halo); stroke-width:1.5}
 .cel-cometdot.cel-faint{fill:var(--halo); stroke:var(--brass); stroke-width:2}
 .cel-cometdot.cel-below{fill-opacity:.45; stroke-dasharray:2.5 2.5}
-.comet-tail{stroke:var(--brass)}
-.cel-geocomet.cel-below .comet-tail{opacity:.5}
+.cel-comet-tail{stroke:var(--brass)}
+.cel-geocomet.cel-below .cel-comet-tail{opacity:.5}
 .cel-stroke-comet{stroke:var(--brass)}
 .cel-chip-comet{background:var(--brass)}
 
