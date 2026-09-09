@@ -54,7 +54,7 @@ function onFailure(error) {
 function onMessageArrived(message) {
     //console.log("onMessageArrived: ");
     //console.log(message.payloadString);
-    result = JSON.parse(message.payloadString)['CelestialReport']
+    result = JSON.parse(message.payloadString)
       try {
         var nowTs = Date.now() / 1000;
 
