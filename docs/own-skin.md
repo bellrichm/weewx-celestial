@@ -245,8 +245,8 @@ it sits at `HTML_ROOT`'s root.
 
 Your report also needs `[[[Extras]]] loop_data_file` — the URL, relative
 to *your* report's `HTML_ROOT`, at which the web server serves
-weewx-loopdata's output.  `refresh_rate`, `expiration_time`,
-`page_update_pwd` and `time_zone` work as they do for the bundled page
+weewx-loopdata's output.  `refresh_rate`, `expiration_time` and
+`page_update_pwd` work as they do for the bundled page
 (see [Configuration](configuration.md)), and the page's plate comes from
 the report's `theme` option.
 

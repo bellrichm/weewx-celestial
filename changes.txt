@@ -1,6 +1,16 @@
 weewx-celestial change history
 ------------------------------
 
+9.2 2026/09/10
+--------------
+- ACTION REQUIRED: the time_zone option is gone.  Every time on the page
+  is the STATION's own zone, detected at report time from the machine
+  that generates the report, and there is nothing to set.  weectl does
+  not rewrite what you already have, so a time_zone line in your
+  report's [[[Extras]]] survives the upgrade and is ignored; weewxd
+  logs a warning naming it, on every report cycle, until you delete it.
+  If yours said browser, the page no longer follows the viewer's zone.
+
 9.1 2026/09/08
 --------------
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.4.  9.1 is

@@ -2,7 +2,7 @@
 title: Configuration
 layout: default
 nav_order: 6
-description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, time_zone, theme — the dark and light plates, the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, how the page degrades across almanac tiers, and the two settings that embed the panels in another skin.
+description: The CelestialReport options in weewx.conf — loop_data_file, refresh_rate, expiration_time, theme — the dark and light plates, the sky dome and Next Visible Pass panels, the satellite and comet sets, the countdown row, how the page degrades across almanac tiers, and the two settings that embed the panels in another skin.
 ---
 
 # Configuration
@@ -31,7 +31,6 @@ sees](#upgrading-an-existing-station) below, which is different:
             loop_data_file = ../loopdata/loop-data.txt
             #refresh_rate = 2
             #expiration_time = 24
-            #time_zone = America/New_York
             page_update_pwd = foobar
 ```
 
@@ -69,13 +68,6 @@ placeholder you are meant to replace.
 - `page_update_pwd`: appending `?pageUpdate=<page_update_pwd>` to the URL
   disables expiration for that view.  The password is visible to anyone
   reading the page source, so treat it as a convenience, not a secret.
-- `time_zone`: the timezone of displayed times.  By default the
-  *station's* zone is auto-detected at report time, so remote viewers see
-  station time.  Set an IANA name (`America/New_York`) to force a zone,
-  or `browser` for the viewer's local zone.  It ships commented out
-  above — and unlike the others, the line there is an **example, not a
-  default**: this option's default is having no value at all, which is
-  what makes the zone auto-detect.  Uncomment and edit it to override.
 - `lang`: the page's language — see [Translations](i18n.md).
 - `theme`: the page's plate — `dark` (the default), `light`, or `auto`.
   See [Dark, light and auto](#dark-light-and-auto) below.
@@ -91,8 +83,15 @@ placeholder you are meant to replace.
 Nothing you have set is rewritten: WeeWX fills in only what is absent from
 `weewx.conf`.  So your stanza will not come to look like the one above —
 a station installed before this release keeps `refresh_rate` and
-`expiration_time` live and has no `lang`, `theme` or `time_zone` lines,
-which is fine; copy from above if you want them.
+`expiration_time` live and has no `lang` or `theme` lines, which is
+fine; copy from above if you want them.
+
+A station upgrading from before this release may still carry a
+`time_zone` line.  That option is gone — every time on the page is now
+the station's own zone, detected at report time — and the line is
+ignored.  weewxd logs a warning naming it, on every report cycle, until
+you delete it.  If you had set `browser`, the page no longer follows the
+viewer's zone.
 
 ## Where the loop-data file should live
 
