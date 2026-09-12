@@ -402,12 +402,29 @@ second — by design.
 
 ## Times are in the wrong zone
 
-By default the page shows the **station's** timezone, auto-detected at
-report time, so remote viewers see station time.  Override with
-`time_zone` in the report's `[[[Extras]]]` in `weewx.conf` (not in the
-skin's `skin.conf`, which an upgrade overwrites): an IANA name forces
-that zone, `browser` uses the viewer's own.  See
-[Configuration](configuration.md).
+The page shows the **station's** timezone, detected at report time from
+the machine that generates the report, so every viewer sees station time.
+There is no option to change it.
+
+If the times are wrong, that machine's own zone is wrong, or the page
+could not learn it.  It is read from the `TZ` environment variable
+weewxd runs under, then from `/etc/localtime` where that is a symlink
+into the zoneinfo tree, then from `/etc/timezone` — the same order the
+machine itself resolves a zone, so that a weewxd started with `TZ` set
+reports the zone it is actually keeping time in.  When none of the three
+names a zone, or when the name is one this browser does not know, the
+page falls back to the viewer's local zone and the javascript console
+says so.
+
+A `TZ` holding a POSIX rule rather than a zone name (`CST6CDT` rather
+than `America/Chicago`) is the one case the page cannot follow: weewxd
+keeps time by it, but there is no zone name to send to the browser.  Set
+`TZ` to a zoneinfo name if you set it at all.
+
+Earlier releases had a `time_zone` option in the report's `[[[Extras]]]`.
+It is gone.  A line left over from then is ignored, and weewxd logs a
+warning naming it, on every report cycle, until you delete it; if it said
+`browser`, the page no longer follows the viewer's zone.
 
 ## The translation did not take
 

@@ -159,7 +159,7 @@ configuration:
 
 | baked today | source |
 |---|---|
-| `page_update_pwd`, `refresh_rate`, `expiration_time`, `time_zone` | `[Extras]` |
+| `page_update_pwd`, `refresh_rate`, `expiration_time` | `[Extras]` |
 | `STATION_LAT` | `$station` |
 | `GEN_TS` | `$almanac.time_ts` |
 | `PER_AU`, `DIST_LABEL` | `$unit` (windrun stands in for group_distance) |
@@ -604,7 +604,6 @@ diffing `install.py`.
             loop_data_file = ../loopdata/loop-data.txt
             #refresh_rate = 2
             #expiration_time = 24
-            #time_zone = America/New_York
             page_update_pwd = foobar
         [[[LoopData]]]
             [[[[fields]]]]

@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.1';
+  var CELESTIAL_JS_VERSION = '9.2';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -234,10 +234,9 @@ var celestial = (function () {
     // The header's "updated" stamp: BYTE-IDENTICAL to the template's
     // first paint, which renders %H:%M:%S of the generation instant in
     // the station's zone, for the same reason as fmtHM below -- the
-    // first packet must not reformat what the report painted.  (Under a
-    // time_zone override the zone differs and so may the digits; the
-    // shape is still the same.)  Through 8.3.4 this was
-    // LOCALE-formatted (an English page read "03:11:22 PM"), which no
+    // first packet must not reformat what the report painted.
+    // Through 8.3.4 this was LOCALE-formatted (an English page read
+    // "03:11:22 PM"), which no
     // template can bake byte for byte across locales; 24-hour matches
     // the chip details beside it.
     return new Date(ts * 1000).toLocaleString('en-GB',
@@ -249,10 +248,9 @@ var celestial = (function () {
     // template's first paint, which renders %H:%M in the station's zone
     // -- the first live rewrite must not reformat what the report
     // painted (no seconds, no locale AM/PM: en-GB with hour12 off is
-    // 24-hour HH:MM in every browser; under a time_zone override only
-    // the zone, and so the digits, can differ).  The remaining-time
-    // value above it is the hh:mm:ss-shaped number; the two must not
-    // wear the same dress.
+    // 24-hour HH:MM in every browser).  The remaining-time value above
+    // it is the hh:mm:ss-shaped number; the two must not wear the same
+    // dress.
     return new Date(ts * 1000).toLocaleString('en-GB',
       tzOptions({hour: '2-digit', minute: '2-digit', hour12: false}));
   }
@@ -3221,20 +3219,19 @@ var celestial = (function () {
     page_update_pwd = config.page_update_pwd;
     refresh_rate = config.refresh_rate;
     expiration_time = config.expiration_time;
-    // Timezone for displayed times: the station's zone, auto-detected by
-    // the report; the time_zone Extras option overrides ('browser' forces
-    // the viewer's browser-local zone), and empty falls back to
-    // browser-local too.
+    // Timezone for displayed times: the STATION's zone, detected by the
+    // report on the machine that generated it.  There is no option --
+    // every viewer of a page sees the same clock, the station's.  Empty
+    // means detection failed, and tzOptions then leaves the browser's
+    // own zone in place.
     time_zone = config.time_zone;
-    if (time_zone === 'browser') {
-      time_zone = '';
-    }
-    // An unknown zone name must not break every render: probe once and fall
-    // back to the browser's local zone.
+    // A zone this browser does not know must not break every render:
+    // probe once and fall back to browser-local.
     try {
       new Date().toLocaleString("en-US", time_zone === '' ? {} : {timeZone: time_zone});
     } catch (e) {
-      console.log('bad time_zone "' + time_zone + '", using browser-local');
+      console.log('celestial.js: unknown time zone "' + time_zone +
+                  '", using browser-local');
       time_zone = '';
     }
     STATION_LAT = config.station_lat;

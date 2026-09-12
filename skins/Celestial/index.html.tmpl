@@ -9,9 +9,8 @@
 ## this file and from celestial_page.py (the strings the javascript
 ## composes) and enforces that lang/en.conf ships exactly the keys that
 ## render.
-## time and datetime dress the header's "updated" stamp (see there).
+## time dresses the header's "updated" stamp (see there).
 #import time
-#import datetime
 ## $panels is $celestial, the page's panels (celestial_page.py's
 ## CelestialPage), resolved ONCE here and tested at every call below:
 ## a weewx.conf stanza overriding search_list_extensions with the
@@ -119,31 +118,22 @@
             ## The "updated" stamp first-paints the generation instant -- the
             ## page's clock until the first loop packet (the config block's
             ## gen_ts) -- in the shape fmtHMS repaints it in: %H:%M:%S.
-            ## And in the ZONE fmtHMS repaints it in, which is the report's
-            ## own time_zone Extras setting where it names one, NOT simply
-            ## weewxd's: a station displaying another zone would otherwise
-            ## paint station-local here and have the first packet rewrite
-            ## it, a visible jump in the most prominent spot on the page.
-            ## Two cases no generation-time value can match, because the
-            ## zone the javascript will use is the VIEWER's and there is no
-            ## viewer yet: time_zone = browser, and a zone name the
-            ## javascript's own probe rejects (a misspelled IANA name,
-            ## which it logs and then falls back to browser-local for).  In
-            ## both the stamp stays station-local and the first packet
+            ## And in the ZONE fmtHMS repaints it in: the station's own,
+            ## which is this machine's, so time.localtime is already it.
+            ## Three cases can still part them, and in all three the
+            ## javascript ends up in the VIEWER's zone, which no
+            ## generation-time value can match because there is no viewer
+            ## yet: station_time_zone() found nothing to report (no TZ, no
+            ## /etc/localtime symlink, no /etc/timezone); the script's own
+            ## probe rejected the name because this BROWSER does not know
+            ## it; or TZ holds a POSIX rule rather than a zoneinfo name,
+            ## which time.localtime honors here and which has no name to
+            ## send.  The stamp stays station-local and the first packet
             ## moves it.  That is the right trade rather than a defect to
             ## design around: a report generates a COMPLETE page, so the
             ## first paint must be a real instant in a defined zone, not a
             ## blank waiting for a packet that may never come.
-            ## The #try also covers a python too old for zoneinfo; the
-            ## fallback costs the zone and never the page.
             #set $gen_hms = time.strftime('%H:%M:%S', time.localtime($almanac.time_ts))
-            #if $Extras.has_key('time_zone') and str($Extras.time_zone) != 'browser'
-            #try
-            #set $gen_hms = datetime.datetime.fromtimestamp($almanac.time_ts, __import__('zoneinfo').ZoneInfo(str($Extras.time_zone))).strftime('%H:%M:%S')
-            #except
-            #pass
-            #end try
-            #end if
             &middot; $gettext("updated") <span id="last-update">$gen_hms</span> <span id="live-label"></span>
           </div>
         </div>

@@ -328,15 +328,48 @@ def _esc(s: Any) -> str:
 
 def station_time_zone() -> str:
     """The station's IANA time zone, auto-detected on the machine the
-    report is generated on: /etc/localtime is a symlink into the zoneinfo
-    tree on Debian-family systems; /etc/timezone is the fallback.  Empty
-    when neither yields a zone the tree carries (the javascript then falls
-    back to the viewer's browser time zone)."""
+    report is generated on, in the order that machine itself resolves
+    one: the TZ environment variable, then /etc/localtime as a symlink
+    into the zoneinfo tree, then Debian-family /etc/timezone.  Empty when
+    none of the three yields a zone the tree carries (the javascript then
+    falls back to the viewer's browser time zone).
+
+    TZ FIRST, and it is not merely a third source.  time.localtime --
+    what the template's header stamp renders through, and what
+    weewx.units renders every time through -- honors TZ over
+    /etc/localtime.  So a weewxd started with TZ set (systemd
+    Environment=TZ=, a Docker image) would otherwise report one zone to
+    the javascript and paint another into the page, and the first packet
+    would rewrite the header in front of the reader.  Reading TZ first
+    closes that for the shape systemd and Docker actually use, a
+    zoneinfo NAME.  It does not close it for a POSIX rule (TZ=CST6CDT):
+    time.localtime honors one, but there is no IANA name to hand the
+    javascript, so the next source answers and the two can still differ.
+    Measured rather than assumed -- this host's tzdata carries no
+    /usr/share/zoneinfo/CST6CDT, so the rule is discarded here; where a
+    tree does carry one it is passed on, and the script's own probe is
+    what catches a name the browser will not take.
+
+    Since the time_zone option is gone this is the ONLY way the page can
+    learn its zone, so the chain is worth having all three links: a host
+    whose /etc/localtime is a regular copy rather than a symlink and
+    which carries no /etc/timezone (older RHEL-family installs, minimal
+    containers) would otherwise leave every time on the page in the
+    VIEWER's zone, with nothing a station could set to correct it."""
     tz = ''
-    try:
-        tz = os.readlink('/etc/localtime').split('zoneinfo/')[-1]
-    except Exception:
-        pass
+    # TZ may be a zoneinfo name (America/Chicago), but it may equally be
+    # a POSIX rule (CST6CDT, EST5EDT) or empty-meaning-UTC.  The tree
+    # check at the end is what sorts them out -- a name the tree does not
+    # carry is no use to Intl either, so it is discarded and the next
+    # source gets its turn.
+    tz = os.environ.get('TZ', '').strip().lstrip(':')
+    if tz and not os.path.exists('/usr/share/zoneinfo/' + tz):
+        tz = ''
+    if not tz:
+        try:
+            tz = os.readlink('/etc/localtime').split('zoneinfo/')[-1]
+        except Exception:
+            pass
     if not tz:
         # Bare, like the include's #except: an undecodable byte in the
         # file is a ValueError, not an OSError, and a probe that raises
@@ -691,6 +724,28 @@ class CelestialPage:
         self._sets: Optional[List[FragmentSet]] = None
         self._sets_error: Optional[str] = None
         self._refused: List[str] = []
+        # The time_zone Extras option is GONE: the page shows the
+        # station's own zone, always.  weectl's conditional_merge never
+        # rewrites, so a station that set it keeps an inert line in
+        # weewx.conf -- and a station that set 'browser' silently stops
+        # showing viewer-local time.  Say so, because nothing else
+        # would -- once per instance, which is twice a report cycle: the
+        # search list builds one of these and the fragment generator
+        # builds another.  Not worth deduplicating across them; a line
+        # you are being told to delete should be easy to find in a log.
+        stale = self.skin_dict.get('Extras', {})
+        if isinstance(stale, dict) and 'time_zone' in stale:
+            # Name the report, as every other config fault in this file
+            # does: a station runs several, and the key is read from the
+            # MERGED skin dict, so it may sit in weewx.conf's stanza or
+            # in the skin's own skin.conf -- say both rather than send
+            # the reader to the wrong file.
+            log.warning("celestial: report '%s' still sets [Extras] time_zone.  "
+                        'It is no longer used and is ignored -- the page shows '
+                        "the station's own time zone.  Delete the line from that "
+                        "report's stanza in weewx.conf, or from the skin's "
+                        'skin.conf if it is there.',
+                        self.skin_dict.get('REPORT_NAME', '(unnamed)'))
 
     # -- translation -------------------------------------------------------
 
@@ -1214,7 +1269,6 @@ class CelestialPage:
         extras = self.skin_dict.get('Extras', {})
         if not isinstance(extras, dict):
             extras = {}
-        time_zone = extras.get('time_zone')
         texts = almanac_texts(alm)
         ords = alm.formatter.ordinate_names
         per_au, dist_label = distance_unit(alm)
@@ -1223,9 +1277,12 @@ class CelestialPage:
             'page_update_pwd': str(extras.get('page_update_pwd', 'foo')),
             'refresh_rate': _number(extras.get('refresh_rate'), 2),
             'expiration_time': _number(extras.get('expiration_time'), 24),
-            # The option overrides the station's detected zone ('browser'
-            # forces the viewer's, resolved on the javascript side).
-            'time_zone': station_time_zone() if time_zone is None else str(time_zone),
+            # The station's own zone, detected on the machine generating
+            # the report -- there is no option, so a remote viewer of a
+            # public page sees station time like everyone else.  Empty
+            # when detection fails, which the javascript reads as
+            # browser-local.
+            'time_zone': station_time_zone(),
             'station_lat': float(alm.lat),
             'gen_ts': int(alm.time_ts),
             'per_au': per_au,

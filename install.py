@@ -182,15 +182,6 @@ CONFIG = """
             # LIVE badge starts it again.
             #expiration_time = 24
 
-            # The timezone of every time shown on the page.  Leave it
-            # commented and the STATION's zone is auto-detected at
-            # generation time, so remote viewers of a public page see
-            # station time -- which is why this one ships without a
-            # value: absence IS the setting.  The line below is an
-            # EXAMPLE, not a default.  Any IANA name forces that zone;
-            # the word browser forces the viewer's own.
-            #time_zone = America/New_York
-
             # PLACEHOLDER -- choose your own password.  Loading the page
             # as ?pageUpdate=<this password> exempts it from expiring,
             # which is what a kiosk display wants.  Note the URL
@@ -205,7 +196,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.1",
+            version = "9.2",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

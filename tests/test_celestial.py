@@ -222,7 +222,7 @@ def sat_feed_packets(wall, report=REPORT_NAME, satellites=True):
     packets = []
     for i, ts in enumerate((TIME_TS, TIME_TS + 2, TIME_TS + 4)):
         alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                    formatter=weewx.units.get_default_formatter())
+                                    formatter=report_formatter())
         r = {'current.dateTime.raw': wall + 2 * i,
              'almanac.moon.phase': alm.moon.phase,
              'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
@@ -275,15 +275,36 @@ def _wcag_ratio(fg, bg):
 
 def lang_formatter(conf):
     """The formatter a report running a shipped lang file has: its
-    [Units] [[Ordinates]] compass, and the unit labels of WeeWX's skin
-    defaults (weewx.defaults, what get_default_formatter carries) -- the
-    lang files ship no [[Labels]] of their own, so a German report
-    labels miles and kilometers as the defaults do.  A bare Formatter
-    has NO labels, and once painted the roster's unit cell empty here
-    while production painted ' miles'."""
+    [Units] [[Ordinates]] compass, any [[TimeFormats]] it sets over
+    WeeWX's own, and the unit labels of WeeWX's skin defaults
+    (weewx.defaults, what get_default_formatter carries) -- the lang
+    files ship no [[Labels]] of their own, so a German report labels
+    miles and kilometers as the defaults do.  A bare Formatter has NO
+    labels, and once painted the roster's unit cell empty here while
+    production painted ' miles'."""
+    defaults = weewx.units.get_default_formatter()
+    times = dict(defaults.time_format_dict)
+    times.update(dict(conf['Units'].get('TimeFormats', {})))
     return weewx.units.Formatter(
-        unit_label_dict=weewx.units.get_default_formatter().unit_label_dict,
+        unit_label_dict=defaults.unit_label_dict,
+        time_format_dict=times,
         ordinate_names=list(conf['Units']['Ordinates']['directions']))
+
+
+def report_formatter(lang='en'):
+    """The formatter a PRODUCTION Celestial report has.  skin.conf ships
+    `lang = en` live, so WeeWX always merges a lang file over it and
+    CheetahGenerator builds the Formatter from the merged [Units].
+    get_default_formatter() alone is NOT that formatter -- it is
+    weewx.defaults, with no lang file over it -- so a harness using it
+    renders with something no station runs.  The two agree today only
+    because en.conf's ordinates happen to match the defaults; the moment
+    that file sets anything of its own, a test using the defaults would
+    pass while production did something else."""
+    configobj = pytest.importorskip('configobj')
+    return lang_formatter(configobj.ConfigObj(
+        os.path.join(SKIN_DIR, 'lang', '%s.conf' % lang),
+        encoding='utf-8', file_error=True))
 
 
 def make_sky_page(texts=None, theme=None):
@@ -360,7 +381,7 @@ def wxskyfield_almanac(wxskyfield_sky):
     with saved_almanacs():
         assert mod.register_almanac(wxskyfield_sky)
         yield weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                    formatter=weewx.units.get_default_formatter())
+                                    formatter=report_formatter())
 
 
 @pytest.fixture(scope='session')
@@ -387,7 +408,7 @@ def wxskyfield_sat_almanac(wxskyfield_sat_sky):
     with saved_almanacs():
         assert mod.register_almanac(wxskyfield_sat_sky)
         yield weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                    formatter=weewx.units.get_default_formatter())
+                                    formatter=report_formatter())
 
 
 @pytest.fixture(scope='session')
@@ -426,7 +447,7 @@ def wxskyfield_comet_almanac(wxskyfield_comet_sky):
     with saved_almanacs():
         assert mod.register_almanac(wxskyfield_comet_sky)
         yield weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                    formatter=weewx.units.get_default_formatter())
+                                    formatter=report_formatter())
 
 
 class TestEngineGuards:
@@ -592,7 +613,7 @@ class TestSampleSkinRenders:
     its else-value and dies with SyntaxError only at render time)."""
 
     @staticmethod
-    def render(almanac_obj, with_time_zone=True, lang='en', texts=None, labels=None,
+    def render(almanac_obj, lang='en', texts=None, labels=None,
                sky_page=None, interval_s=None, unbound_celestial=False):
         from Cheetah.Template import Template
 
@@ -626,8 +647,6 @@ class TestSampleSkinRenders:
         extras = Extras(loop_data_file='/gauge-data/loop-data.txt',
                         expiration_time=24, refresh_rate=2,
                         version=celestial.CELESTIAL_VERSION)
-        if with_time_zone:
-            extras['time_zone'] = 'America/Los_Angeles'
         # The skin dict the CelestialPanels search list would hand
         # $celestial, mirrored from the same stubs the template's tags
         # read, so the config block bakes what the tags bake.
@@ -759,7 +778,7 @@ class TestSampleSkinRenders:
             weewx.almanac.almanacs[:] = [Foreign(wxskyfield_sky)]
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             html = self.render(alm)
         assert 'Hipparcos' in html                       # probe passed...
         assert 'Calculated with <a' not in html          # ...identity did not
@@ -844,7 +863,7 @@ class TestSampleSkinRenders:
             def line(now_ts):
                 alm = weewx.almanac.Almanac(now_ts, LATITUDE, LONGITUDE,
                                             altitude=ALTITUDE_M,
-                                            formatter=weewx.units.get_default_formatter())
+                                            formatter=report_formatter())
                 rise = alm.iss.next_visible_pass.rise.raw
                 assert abs(rise - 1750503568) < 1, 'fixture pass moved'
                 return self.cell(self.render(alm, sky_page=make_sky_page()), 'sat-line-iss')
@@ -975,7 +994,7 @@ class TestSampleSkinRenders:
             assert mod.register_almanac(ghost_sky)
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             html = self.render(alm, sky_page=make_sky_page())
         assert 'id="geo-row-ghost"' in html
         assert self.cell(html, 'almanac.ghost.earth_distance') == ''
@@ -1102,7 +1121,7 @@ class TestSampleSkinRenders:
         assert '#efece2' in noon.lower()
         midnight_alm = weewx.almanac.Almanac(
             TIME_TS + 12 * 3600, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-            formatter=weewx.units.get_default_formatter())
+            formatter=report_formatter())
         night = self.render(midnight_alm, sky_page=sky_page)
         assert '<html lang="en" class="theme-dark">' in night
         assert '#161f3d' in night.lower()
@@ -5029,7 +5048,7 @@ class TestSampleSkinRenders:
         packets = []
         for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
             alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             r = {'current.dateTime.raw': ts,
                  'almanac.moon.phase': alm.moon.phase,
                  'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
@@ -5623,7 +5642,7 @@ class TestSampleSkinRenders:
         with saved_almanacs():
             weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             assert alm.hasExtras
             html = self.render(alm)
         assert re.match(r'[\d,]+$', self.cell(html, 'almanac.moon.earth_distance'))
@@ -5654,12 +5673,12 @@ class TestSampleSkinRenders:
         with saved_almanacs():
             weewx.almanac.almanacs[:] = [weewx.almanac.WeeutilAlmanacType()]
             plain = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                          formatter=weewx.units.get_default_formatter())
+                                          formatter=report_formatter())
             assert not plain.hasExtras
-            # Render without a time_zone Extras key: the config block must
-            # auto-detect the station machine's zone (/etc/localtime
-            # symlink, /etc/timezone fallback).
-            html = self.render(plain, with_time_zone=False)
+            # The config block auto-detects the station machine's zone
+            # (/etc/localtime symlink, /etc/timezone fallback).  There is
+            # no option -- that is the only way the zone is ever set.
+            html = self.render(plain)
         for body in ('moon', 'sun', 'neptune', 'proxima_centauri'):
             assert self.cell(html, 'almanac.%s.earth_distance' % body) == '', body
             assert self.cell(html, 'geo-alt-%s' % body) == '', body
@@ -5723,7 +5742,7 @@ class TestSampleSkinRenders:
                 else weewx.almanac.WeeutilAlmanacType()]
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             # Exactly 5.2: the attribute was never set.  Note the
             # constructor is called WITHOUT texts= -- 5.2's Almanac has no
             # such keyword and raises TypeError, so passing it here (even
@@ -7050,7 +7069,7 @@ class TestConfigScript:
     @staticmethod
     def almanac(converter=None):
         return weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                     formatter=weewx.units.get_default_formatter(),
+                                     formatter=report_formatter(),
                                      converter=converter)
 
     @staticmethod
@@ -7128,7 +7147,6 @@ class TestConfigScript:
         literals were for the same almanac and [Extras]."""
         page = self.page(extras={'loop_data_file': '/gauge-data/loop-data.txt',
                                  'refresh_rate': '2', 'expiration_time': '24',
-                                 'time_zone': 'America/Los_Angeles',
                                  'page_update_pwd': 'foobar'},
                          sky_page=make_sky_page())
         cfg = page.config_dict(wxskyfield_sat_almanac)
@@ -7136,7 +7154,7 @@ class TestConfigScript:
         assert cfg['page_update_pwd'] == 'foobar'
         assert cfg['refresh_rate'] == 2 and isinstance(cfg['refresh_rate'], int)
         assert cfg['expiration_time'] == 24
-        assert cfg['time_zone'] == 'America/Los_Angeles'
+        assert cfg['time_zone'] == celestial_page.station_time_zone()
         assert cfg['station_lat'] == LATITUDE
         assert cfg['gen_ts'] == int(TIME_TS)
         assert cfg['per_au'] == 9.2955807e7 and cfg['dist_label'] == ' miles'
@@ -7170,13 +7188,32 @@ class TestConfigScript:
         cfg = celestial_page.CelestialPage({}, None).config_dict(self.almanac())
         assert cfg['page_update_pwd'] == 'foo' and cfg['report_name'] == ''
 
-    def test_time_zone_option_passes_through(self):
-        """The option wins over the detected zone, 'browser' included
-        (the javascript resolves it), and an EMPTY value is a value --
-        browser-local, as the include's has_key branch made it."""
+    def test_a_stale_time_zone_option_is_ignored_and_logged(self, caplog):
+        """The time_zone option is GONE: the page shows the station's own
+        zone whatever a leftover [Extras] line says -- including
+        'browser', which used to mean the viewer's.  conditional_merge
+        never rewrites, so that line survives an upgrade and the change
+        would otherwise be silent; the station is told once per instance
+        -- twice a report cycle, since the search list and the fragment
+        generator each build one."""
         for tz in ('Europe/Berlin', 'browser', ''):
-            cfg = self.page(extras={'time_zone': tz}).config_dict(self.almanac())
-            assert cfg['time_zone'] == tz
+            with caplog.at_level(logging.WARNING, logger='celestial_page'):
+                caplog.clear()
+                page = self.page(extras={'time_zone': tz})
+            # The line names the REPORT, as every other config fault in
+            # celestial_page does -- a station runs several, and the key
+            # is read from the merged dict, so it can sit in either file.
+            assert "report 'CelestialReport' still sets [Extras] time_zone" \
+                in caplog.text
+            assert 'Delete the line' in caplog.text
+            assert 'skin.conf' in caplog.text
+            assert page.config_dict(self.almanac())['time_zone'] == \
+                celestial_page.station_time_zone()
+        # No line, no warning.
+        with caplog.at_level(logging.WARNING, logger='celestial_page'):
+            caplog.clear()
+            self.page(extras={'refresh_rate': '2'})
+        assert 'time_zone' not in caplog.text
 
     def test_locale_is_the_language_only(self):
         """As core's $lang: 'en', never 'en_AU.utf8'."""
@@ -7286,6 +7323,35 @@ class TestConfigScript:
     def test_station_time_zone_is_a_zone_the_machine_has(self):
         tz = celestial_page.station_time_zone()
         assert tz == '' or os.path.exists('/usr/share/zoneinfo/' + tz)
+
+    def test_station_time_zone_reads_tz_first(self, monkeypatch):
+        """TZ wins over /etc/localtime, because time.localtime does --
+        and time.localtime is what the header stamp and every
+        weewx.units rendering go through.  A weewxd started with TZ set
+        (systemd Environment=TZ=, a Docker image) would otherwise report
+        one zone to the javascript and paint another into the page.
+
+        A TZ that is NOT a zone the tree carries is discarded rather
+        than passed on: a POSIX rule (CST6CDT) or a typo is no use to
+        Intl either, so the next source gets its turn.  With the option
+        gone this chain is the only way the page learns its zone, so
+        each link is exercised here."""
+        real = celestial_page.station_time_zone()
+        # A zone the tree certainly has, and not the one this host uses.
+        other = 'America/Chicago' if real != 'America/Chicago' else 'Europe/Berlin'
+        assert os.path.exists('/usr/share/zoneinfo/' + other)
+        monkeypatch.setenv('TZ', other)
+        assert celestial_page.station_time_zone() == other
+        # The ':' form POSIX allows, and surrounding whitespace.
+        monkeypatch.setenv('TZ', ':' + other)
+        assert celestial_page.station_time_zone() == other
+        # Not a zone in the tree -- fall through to the file sources.
+        monkeypatch.setenv('TZ', 'Mars/Olympus_Mons')
+        assert celestial_page.station_time_zone() == real
+        monkeypatch.setenv('TZ', '')
+        assert celestial_page.station_time_zone() == real
+        monkeypatch.delenv('TZ')
+        assert celestial_page.station_time_zone() == real
 
     def test_the_page_starts_the_script_before_its_panels(self, wxskyfield_almanac):
         """The script tag is a plain <script src> in <head> -- NOT
@@ -7417,7 +7483,7 @@ class TestPanels:
 
             def row(ts):
                 alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                            formatter=weewx.units.get_default_formatter())
+                                            formatter=report_formatter())
                 return self.page(make_sky_page()).countdown_html(alm)
 
             html = row(TIME_TS)                        # the fixture pass is ~15 h out
@@ -7442,7 +7508,7 @@ class TestPanels:
             assert mod.register_almanac(wxskyfield_sat_sky)
             alm = weewx.almanac.Almanac(TIME_TS + 80 * 86400, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             html = self.page(make_sky_page()).countdown_html(alm)
         assert re.search(r'^ data-ts="\d+"$', self.chip_attrs(html, 'chip-season'))
         assert self.cell(html, 'chip-season-k') == 'autumn begins'
@@ -7741,7 +7807,7 @@ class TestPanels:
             assert mod.register_almanac(wxskyfield_sat_sky)
             page = self.page(make_sky_page())
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             assert page.pass_panel_hidden(alm) is False
             assert page.pass_html(alm).startswith(
                 '<div id="pass-wrap" data-celestial="%s">\n' % celestial.CELESTIAL_VERSION)
@@ -7750,7 +7816,7 @@ class TestPanels:
             # rows only.
             later = weewx.almanac.Almanac(TIME_TS + 80 * 86400, LATITUDE, LONGITUDE,
                                           altitude=ALTITUDE_M,
-                                          formatter=weewx.units.get_default_formatter())
+                                          formatter=report_formatter())
             assert page.pass_panel_hidden(later) is False
             assert page.pass_html(later).startswith(
                 '<div id="pass-wrap" data-celestial="%s" hidden>\n' % celestial.CELESTIAL_VERSION)
@@ -7788,7 +7854,7 @@ class TestPanels:
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter(),
+                                        formatter=report_formatter(),
                                         texts={'iss': 'ISS & <Zarya>', 'moon': 'Mo"on'})
             page = self.page(make_sky_page())
             for html in (page.dome_roster_html(alm), page.pass_roster_html(alm),
@@ -7824,13 +7890,13 @@ class TestPanels:
         with saved_almanacs():
             weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             assert page.footer_html(alm) == (
                 "Calculated with the station's extended almanac (weewx-skyfield or PyEphem) "
                 '&middot; live via weewx-loopdata.')
             weewx.almanac.almanacs[:] = [weewx.almanac.WeeutilAlmanacType()]
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             assert page.footer_html(alm) == (
                 "Calculated with WeeWX's built-in almanac &middot; live via weewx-loopdata.")
 
@@ -7879,7 +7945,7 @@ class TestPanels:
         with saved_almanacs():
             weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             page = self.page(make_sky_page())
             assert page.dome_html(alm).startswith('<p class="cel-skyhint">Install')
             assert page.pass_html(alm) == ''
@@ -8340,7 +8406,7 @@ class TestPanels:
         with saved_almanacs():
             weewx.almanac.almanacs[:] = [weewx.almanac.PyEphemAlmanacType()]
             lesser = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                           formatter=weewx.units.get_default_formatter())
+                                           formatter=report_formatter())
             page = self.sets_page(make_sky_page(), sets)
             dome = page.dome_html(lesser)
             assert 'Install' in dome and refused not in dome
@@ -8586,7 +8652,7 @@ class TestPanels:
             weewx.almanac.almanacs[:] = [weewx.almanac.WeeutilAlmanacType()]
             geo = page.geocentric_html(weewx.almanac.Almanac(
                 TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                formatter=weewx.units.get_default_formatter()))
+                formatter=report_formatter()))
         assert geo.startswith('<p class="cel-skyhint">') and geo.count(mark) == 1
         assert geo.index(mark) > geo.index('</p>')
         html = TestSampleSkinRenders.render(alm, sky_page=make_sky_page())
@@ -9864,7 +9930,7 @@ class TestPageFields:
             assert mod.register_almanac(wxskyfield_sat_sky)
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             values = {}
             for entry in celestial.PAGE_FIELDS:
                 if not entry.startswith(('almanac.iss.', 'almanac.tiangong.')):
@@ -9910,7 +9976,7 @@ class TestPageFields:
         # are read by attribute, so two namespaces serve.
         ctx = types.SimpleNamespace(
             almanac_fields=loopdata.LoopData.get_almanac_fields(pin_fields),
-            almanac_texts={}, formatter=weewx.units.get_default_formatter(),
+            almanac_texts={}, formatter=report_formatter(),
             converter=weewx.units.Converter())
         cfg = types.SimpleNamespace(
             latitude=LATITUDE, longitude=LONGITUDE, altitude_m=ALTITUDE_M)
@@ -9972,7 +10038,7 @@ class TestPageFields:
             assert mod.register_almanac(wxskyfield_comet_sky)
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             values = {}
             for entry in entries:
                 af = loopdata.LoopData.parse_almanac_field(entry)
@@ -10015,7 +10081,7 @@ class TestPageFields:
             assert mod.register_almanac(wxskyfield_comet_sky)
             alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE,
                                         altitude=ALTITUDE_M,
-                                        formatter=weewx.units.get_default_formatter())
+                                        formatter=report_formatter())
             values = {}
             for entry in entries:
                 af = loopdata.LoopData.parse_almanac_field(entry)
@@ -12608,10 +12674,6 @@ class TestManualInStepWithCode:
     # Every one is guarded with $Extras.has_key, so absence is a
     # supported state rather than a missing default:
     _UNDECLARED_BY_DESIGN = {
-        # Commented out in skin.conf on purpose: with no setting, the
-        # STATION's zone is auto-detected at report time, which is the
-        # behavior remote viewers of a public page want.
-        'time_zone',
         # Optional overrides of the page heading and the HTML <title>;
         # absent, the skin composes both from the station's location.
         'title', 'meta_title',
@@ -12983,13 +13045,14 @@ class TestManualInStepWithCode:
         governs = dict(skin['Extras'])
         governs.update({k: skin[k] for k in skin.scalars})
 
-        # An option skin.conf ITSELF ships commented out has no value to
-        # compare against, because its default is absence -- time_zone
-        # means "auto-detect the station's zone" when nothing sets it.
-        # Its assignment in CONFIG is an example, so it is exempt, but
-        # the exemption is verified rather than assumed: skin.conf must
-        # really ship it commented, or it is an option we simply failed
-        # to keep in step.
+        # An option skin.conf ITSELF ships commented out would have no
+        # value to compare against, because its default would be absence.
+        # Such an option's assignment in CONFIG is an EXAMPLE rather than
+        # a default, so it would be exempt from the comparison below --
+        # but the exemption is verified rather than assumed: skin.conf
+        # must really ship it commented, or it is an option we simply
+        # failed to keep in step.  There are none today; the time_zone
+        # option was the only one and it is gone.
         with open(os.path.join(SKIN_DIR, 'skin.conf'), encoding='utf-8') as f:
             commented_in_skin = set(re.findall(r'^\s*#\s*(\w+)\s*=', f.read(),
                                                re.M))
@@ -13007,9 +13070,10 @@ class TestManualInStepWithCode:
         assert wrong == {}, (
             'a commented-out default disagrees with the skin.conf value that '
             'actually governs (skin.conf, install.py): %s' % wrong)
-        # And the exemption must stay narrow.
-        assert by_example == {'time_zone'}, (
-            'a new option is commented out with no value backing it: %s'
+        # And the exemption must stay EMPTY: every commented-out option
+        # states a real default that skin.conf also sets.
+        assert by_example == set(), (
+            'an option is commented out with no value backing it: %s'
             % sorted(by_example))
 
     def test_merged_stanza_keeps_comments_in_their_own_section(self):
