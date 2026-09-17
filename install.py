@@ -53,8 +53,7 @@ def loader():
     # downgraded weewx-loopdata unable to list its extensions or to
     # uninstall this one.  The Python and WeeWX checks above have the
     # same shape but cannot regress after install; this one can.
-    # (John's ruling, 2026-08-25, for celestial, weatherboard and
-    # liveseasons alike.)
+    # (Settled 2026-08-25, the same way in every skin here.)
     if installing():
         from weeutil.weeutil import version_compare
         try:
@@ -100,19 +99,31 @@ def loader():
         # own charts about brass -- neither says anything in any log.  So
         # a skyfield that IS there and is too old refuses, here, where the
         # user is reading.  Gated on installing() for the same reason as
-        # the weewx-loopdata check above.
+        # the weewx-loopdata check above.  9.5 raises the floor to 2.6.1: the
+        # sky charts' dates and clock times render through [Texts] keys 2.6.1
+        # renamed, and beside 2.6 a translated page's pass-chart dates would
+        # fall back to English.  9.4 raised it to 2.6: the
+        # panels' colors are 2.6's contrast palette, copied in step, and
+        # beside 2.5 the dial and the dome would disagree about them.  Before
+        # that, 9.3's floor of 2.5: a fragment set's narrow label layer is
+        # drawn by 2.5's label_layers, and keeping an older skyfield working
+        # would mean a fallback that logs on every report cycle, on exactly
+        # the station that should upgrade.
         try:
             from user.wxskyfield import WXSKYFIELD_VERSION
         except Exception:
             WXSKYFIELD_VERSION = None      # absent, or broken: not ours to judge
         if (WXSKYFIELD_VERSION is not None
-                and version_compare(str(WXSKYFIELD_VERSION), '2.4') < 0):
-            sys.exit("weewx-celestial 9.1 requires weewx-skyfield 2.4 or later, "
+                and version_compare(str(WXSKYFIELD_VERSION), '2.6.1') < 0):
+            sys.exit("weewx-celestial requires weewx-skyfield 2.6.1 or later, "
                      "found %s.  Upgrade weewx-skyfield first, then install "
                      "weewx-celestial.  (weewx-skyfield is optional -- the page "
-                     "renders without it -- but an older one is no longer kept "
-                     "in step: the Next Visible Pass dot would not flip and the "
-                     "light theme's accent would disagree with the charts.)"
+                     "renders without it -- but an older one is not kept in "
+                     "step: the charts' dates and clock times read [Texts] keys 2.6.1 "
+                     "renamed, the panels' colors are 2.6's, a skin's narrow label "
+                     "layers need 2.5, and before 2.4 the Next Visible Pass dot "
+                     "would not flip and the light theme's accent would disagree "
+                     "with the charts.)"
                      % WXSKYFIELD_VERSION)
 
     return CelestialInstaller()
@@ -126,8 +137,7 @@ def installing():
     wee_extension has no other option starting so (--list, --uninstall,
     --config, --bin-root, --tmpdir, --dry-run, --verbosity), weectl's
     extension subcommands none, and an argument value never starts with
-    `--`.  Same shape as weatherboard and liveseasons (John's ruling,
-    2026-08-26)."""
+    `--`.  Same shape as weewx-weatherboard's installer (2026-08-26)."""
     return any(arg == 'install' or arg.startswith('--i') for arg in sys.argv)
 
 
@@ -196,7 +206,7 @@ CONFIG = """
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
-            version = "9.2",
+            version = "9.5.1",
             name = 'celestial',
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",

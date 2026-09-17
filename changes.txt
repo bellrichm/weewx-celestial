@@ -1,6 +1,153 @@
 weewx-celestial change history
 ------------------------------
 
+9.5.1 2026/09/16
+----------------
+- ?pageUpdate=<page_update_pwd> keeps the page from expiring even when
+  the URL carries the password percent-encoded, as a browser or a link
+  rewriter may leave it.  The page compared the password as the URL
+  carried it, so an encoded one never matched and the page expired
+  anyway.
+
+9.5 2026/09/15
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6.1 first.
+  The sky charts' dates and clock times read [Texts] keys 2.6.1 renamed,
+  and beside an older weewx-skyfield a translated page's chart dates
+  would fall back to English.  The installer REFUSES to install beside
+  an older one, naming the version it found.  Having none at all is not
+  a refusal.
+
+- ACTION REQUIRED only if you keep a lang file of your own for the
+  Celestial skin: [Texts] keys are renamed and added, and an entry
+  under an old key simply stops being read.  Renamed: "%a %b %-d" is
+  "%a, %b %-d"; "in {m} min" is "in {m} m"; "appears {rise} · peaks
+  {alt}° {culm} · disappears {set} · {m} min" ends "· {m} m"; and
+  "{d}d {h}h {m}m" is replaced by the four keys "{d} d {h} h",
+  "{h} h {m} m", "{m} m" and "{s} s".  New: "%-I:%M %p" (a clock
+  time), "%-I:%M:%S %p" (the header's "updated" stamp) and
+  "{date}, {time}" (a date with its time).  The bundled lang files
+  carry them all.
+
+- Clock times read 12-hour in English: the countdown chips' event
+  times, the satellite rosters' pass times, the header's "updated"
+  stamp and the frozen-sky line all say "3:53 PM".  The format is a
+  [Texts] entry, and the other bundled languages keep 24-hour.  AM and
+  PM come from the station's locale (a British-English station shows
+  "pm"), and a locale with no AM/PM at all reads 24-hour rather than a
+  bare "3:53".
+
+- A date with its time takes a comma in English, "Sep 15, 3:53 PM",
+  matching weewx-skyfield 2.6.1's charts.
+
+- Countdowns show one symbol per unit and the two largest units that
+  matter: "22 d 19 h" a day or more out, "9 h 35 m" inside a day,
+  "35 m" inside an hour, "45 s" in the last minute.  The hh:mm:ss
+  clock inside the final day is gone: a remaining time written like a
+  clock read as a time of day.  The satellite rosters count "in 5 m"
+  and give a pass's length as "10 m"; a count of days stays in words.
+  A number and its unit are joined by a no-break space, so a narrow
+  cell never wraps them apart.
+
+- The live layer writes every clock time and date from the report's own
+  formats, AM/PM and month names, carried in a new config key, clock.
+  It used to format the satellite rosters' pass times and the
+  frozen-sky line through the browser's locale rules, so an English pass
+  time changed from "15:53" to "03:53 PM" on the first loop packet.
+
+9.4.1 2026/09/15
+----------------
+- A satellite's name on the live sky dome is the same size as the names
+  around it.  The page's live marker drew the name with no size, so it
+  took the browser's 16 px default: about twice the size of the other
+  labels on a dome drawn at a small label scale, and smaller than them in
+  a phone-sized label layer.  It is now drawn in every label layer the
+  dome carries, at that layer's body-label size, so the name the screen
+  shows matches its neighbors and switches with them.
+
+9.4 2026/09/14
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6 first.
+  9.4 is pinned to 2.6, whose palette the panels copy.  The installer
+  REFUSES to install beside an older weewx-skyfield, naming the version
+  it found.  Having none at all is not a refusal -- the page still
+  renders on PyEphem or the built-in almanac, with less on it.
+
+- Every piece of text on the page is readable against what is actually
+  painted under it, on both plates, by two measures: a WCAG 2 contrast
+  ratio of at least 4.5 and an APCA lightness contrast of at least
+  Lc 60, with no allowance for large or bold text.  Marks a reader has
+  to find -- the bodies' outlines, the moon's rim, a comet's tail, a
+  satellite's dot -- clear 3.0 and Lc 30.  Opacity counts as part of a
+  color.  On the dark plate that lightens the secondary text (--muted,
+  #C0C5D9), the brass accent (--brass, #E0C27F), the sky charts' ring
+  and star names (now --muted) and the constellation names (--conlab,
+  #BBC5E3), all of them weewx-skyfield 2.6's values; Mars is #D06C56 and
+  Earth's label #92BFB0.  The light plate's moon rim is #868686.  A
+  skin that overrides these tokens keeps its own values -- and on the
+  dark plate an override of --muted now reaches the sky charts' ring
+  and star labels too, which were a fixed color there through 9.3 (the
+  light plate has always worked that way).
+
+- A body below the horizon no longer fades its roster row and its dial
+  label to 55% opacity, which put that text under both measures on both
+  plates: they take the secondary text color instead.  A satellite in a
+  bright sky names itself in that color too, and its dot dims to 80%
+  rather than 35%.  Below the horizon the moon's rim keeps its plate's
+  strength while the disc dims, and a comet's tail dims to 60% on the
+  dark plate and 75% on the light one rather than 50%.  Two additions to
+  the panels' surface carry this: the moon's dark disc and lit limb sit
+  in their own group, `cel-moon-disc`, and the tail's dimming is a token,
+  `--tail-below-op`, set per plate.
+
+- The dial's rings, ticks and rim stay deliberately faint: they are the
+  scale, not something to find, and the one exception to the marks bar.
+
+- The distance odometers flash their changed digits brass again, and the
+  roster's approaching/receding arrow is brass again.  The script had
+  been writing both under class names the stylesheet no longer styled.
+
+- The countdown chips no longer flicker.  Every loop packet rewrote each
+  chip's text even when it had not changed, and the browser repainted it;
+  the script now writes a cell, a dial label or a mark's hover title only
+  when its content differs.
+
+- A page that drives countdown chips of its own can turn celestial's off:
+  `$celestial.config_script($almanac, $filename, countdown=False)`.
+  celestial.js then never touches a countdown chip, so a row of the
+  page's own under the same element ids has one writer instead of two
+  taking turns on every packet, which showed as chips blinking out and
+  back.  The config block gains the key `countdown`, True by default; a
+  value that is not a boolean is logged and leaves the chips live.
+
+9.3 2026/09/12
+--------------
+- ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.5 first.
+  9.3 is pinned to 2.5, whose label layers draw the narrow label scale
+  below.  The installer REFUSES to install beside an older
+  weewx-skyfield, naming the version it found.  Having none at all is
+  not a refusal -- the page still renders on PyEphem or the built-in
+  almanac, with less on it.
+
+- A fragment set may carry a second label scale for narrow screens, so
+  that one page serves desktops and phones: two new keys on a set in a
+  consumer skin's [CelestialFragments], `narrow_label_scale` and
+  `narrow_media` (the CSS media query that selects it, quoted).  They
+  go to weewx-skyfield 2.5's label_layers, which lays the chart's
+  labels out once per scale INSIDE the one drawing -- the collision
+  layout depends on the size, which is why a CSS rescale would not do
+  -- and switches layouts with a media rule in the chart's own style
+  block.  The dots, markers and rings are drawn once, since the scale
+  reaches only the text.  A phone paints its own labels at first paint;
+  nothing is fetched that a desktop does not fetch, and nothing on the
+  page's own markup changes.  Nothing changes for a skin that declares
+  neither key, and the bundled page declares none.  celestial.js moves
+  every layer's copy of a label with its mark, so the nudged bodies and
+  the pass sweep are right on whichever layer is showing.  Visible with
+  weewx-skyfield 2.5 on every page, phone or not: the cardinals, ring
+  figures and pass-arc times are drawn on top of the stars, where
+  through 2.4 a star dot could print over a ring figure.
+
 9.2 2026/09/10
 --------------
 - ACTION REQUIRED: the time_zone option is gone.  Every time on the page

@@ -23,6 +23,47 @@ skin changes, and no file has to be deleted.  Reload any page you have
 open: the javascript is served with the version in its URL, so a browser
 holding the previous release's copy takes the new one on the next load.
 
+9.5 requires **weewx-skyfield 2.6.1** if you run it: upgrade
+weewx-skyfield first, since the installer refuses an older one, naming
+the version it found.  Having none at all is not a refusal.  The two
+releases write clock times, dates and durations the same way, and you
+will see it on an English page: times read 12-hour ("3:53 PM"), a date
+with its time takes a comma ("Sep 15, 3:53 PM"), and a countdown shows
+one symbol per unit ("9 h 35 m", "in 5 m") instead of `hh:mm:ss`.
+Other languages keep their own words and their 24-hour clocks.  Nothing
+to do, unless you keep a lang file of your own for the Celestial skin:
+its renamed and new `[Texts]` keys are listed in `changes.txt`, and an
+entry under an old key simply stops being read.  A skin of your own that
+copies `celestial.js` should copy the new one; its config gains the key
+`clock`, which `config_script` writes.
+
+9.4 requires **weewx-skyfield 2.6** if you run it: upgrade weewx-skyfield
+first, since the installer refuses an older one, naming the version it
+found.  Having none at all is not a refusal.  The two releases share one
+contrast standard, and on the dark page you will see it: the secondary
+text, the brass accent and the sky charts' ring, star and constellation
+names are lighter, and a body below the horizon now shows its roster row
+and dial label in the secondary text color instead of fading them.
+Nothing to do.  A stylesheet of your own that overrides the tokens keeps
+its values, but on the dark plate an override of `--muted` now also
+colors the sky charts' ring and star labels, which through 9.3 kept a
+fixed color there, as they always have on the light plate.  Two fixes
+you will see as well: the countdown chips no longer flicker on every
+loop packet, and the odometers' changed digits flash brass again.  A
+skin of your own that draws countdown chips under this extension's ids
+can now pass `countdown=False` to `config_script`; see
+[Panels in your own skin](own-skin.md).
+
+9.3 requires **weewx-skyfield 2.5** if you run it: upgrade weewx-skyfield
+first, since the installer refuses an older one, naming the version it
+found.  Having none at all is not a refusal.  2.5 moves the dome's
+cardinals, ring figures and pass-arc times to the top of the drawing on
+every page, so a star no longer prints over a "30°"; nothing to do, but
+you will see it.  9.3 also adds two keys to a consumer skin's
+`[CelestialFragments]` sets, `narrow_label_scale` and `narrow_media`, for
+one page that serves desktops and phones; a skin that declares neither is
+untouched.
+
 9.1 takes Pluto off the Geocentric dial, so the dial ends at Neptune
 before the jump to Proxima Centauri and the roster loses a row.  The
 bundled skin needs nothing from you: it ships its own field declaration
@@ -90,7 +131,7 @@ the page — static, with `celestial is not defined` in the browser
 console and nothing in the WeeWX log — never goes live either.  Add
 `celestial.js` to it, or drop the line.
 
-Upgrade **weewx-skyfield to 2.4** before you upgrade this: 9.1 is pinned
+Upgrade **weewx-skyfield to 2.6** before you upgrade this: 9.4 is pinned
 to it and the installer refuses an older one.  On 2.3.x the Next Visible
 Pass dot would stand as drawn through a pass instead of going hollow in
 the earth's shadow, and the light theme's accent would disagree with the
@@ -248,7 +289,7 @@ chips and the comets (8.1) included — the fixed ones from the skin, the
 satellite and comet ones written by the installer for your `[Skyfield]`
 sets.  Your old fields line is neither needed nor touched.
 
-Run weewx-skyfield 2.4: 9.1 is pinned to it and the installer refuses an
+Run weewx-skyfield 2.6.1: 9.5 is pinned to it and the installer refuses an
 older one.  It is what serves the sky dome, the satellite layer, the Next
 Visible Pass chart, the comets and the shower and supermoon chips — the
 sunset, darkness and pass chips are the page's own arithmetic and count
@@ -313,7 +354,7 @@ that through 8.4; it is gone).  The sequence:
 
 1. **Upgrade weewx-loopdata to 7.0 or later** (and install
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.4+ if you have not already).  This extension's installer refuses
+   2.6+ if you have not already).  This extension's installer refuses
    to run beside an older weewx-loopdata, so do it first — before the
    uninstall below leaves you without a page.
 

@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.2';
+  var CELESTIAL_JS_VERSION = '9.5.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -55,6 +55,8 @@ var celestial = (function () {
                           // almanac fields) and convert to the report's
                           // distance unit here
   var LOCALE;
+  var CLOCK;              // the report's clock and date formats and its
+                          // locale's AM/PM and month names (strftime)
   var BODY_LABELS;        // body names from the report's [Almanac] section
   var CARDINALS;          // the report formatter's compass ordinates, N E S W
   var T;                  // the [Texts] strings this script composes, keyed
@@ -66,6 +68,8 @@ var celestial = (function () {
   var PAGE_THEME;         // the theme the page was generated on, 'dark' or
                           // 'light' -- what a refetched fragment's own
                           // report theme is compared with (pageThemeFlip)
+  var COUNTDOWN;          // false on a page that drives its own countdown
+                          // chips: renderCountdown is then never called
   // (The fragment files the dome and the pass chart refetch are named
   // by the panels' own markup -- data-dome-prefix on #dome-svg,
   // data-pass-fragment on #pass-chart -- from the fragment set each
@@ -165,7 +169,16 @@ var celestial = (function () {
     if (expiration_time <= 0) {
       return;
     }
-    if (getUrlParam('pageUpdate') !== page_update_pwd) {
+    // getUrlParam returns the value as the URL carries it, and a browser
+    // or a link rewriter may have percent-encoded it, so compare it
+    // decoded; a stray % that does not decode is compared as it stands.
+    var pageUpdate = getUrlParam('pageUpdate');
+    try {
+      pageUpdate = decodeURIComponent(pageUpdate);
+    } catch (e) {
+      // a bare %: compare it raw
+    }
+    if (pageUpdate !== page_update_pwd) {
       // Expire in N hours, clamped to the browser's int32 timer-delay
       // ceiling (~24.8 days): past 2147483647 ms the delay overflows
       // and the timer fires early -- an expiration_time over ~596
@@ -198,7 +211,9 @@ var celestial = (function () {
     // against latestRecvTs, a stopwatch reading -- while the chips, the
     // rosters and the pass verdict take the station's from serverNow
     // themselves.
-    renderCountdown();
+    if (COUNTDOWN) {
+      renderCountdown();
+    }
     renderSatRosters();
     renderGeo();
     renderDome(nowTs);
@@ -230,37 +245,119 @@ var celestial = (function () {
     }
     return opts;
   }
+  // Every clock time and date this script writes is the report's own
+  // strftime format, filled from the instant's station-zone parts and the
+  // report locale's AM/PM and month names (config.clock) -- never the
+  // browser's Intl, whose idea of a language's clock need not be the
+  // report's ('en' reads "PM" where an en_GB station's strftime says
+  // "pm").  So the first packet repaints exactly the text the report
+  // painted.  The tokens are the ones a date or clock format asks for --
+  // %H %-H %I %-I %M %S %p, %d %-d %m %-m, %b %B, %a %A, %Y %y and %% --
+  // so a translator who writes "%a %-d %B" into one of the format keys
+  // gets the same text from the report and from this script.  Anything
+  // else is left as written, which is visible rather than silent.
+  function zoneParts(ts) {
+    var parts = new Intl.DateTimeFormat('en-US', tzOptions({
+      year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric',
+      minute: 'numeric', second: 'numeric', hour12: false})).formatToParts(new Date(ts * 1000));
+    var v = {};
+    for (var i = 0; i < parts.length; i++) {
+      v[parts[i].type] = parts[i].value;
+    }
+    // hour12: false reads midnight as "24" in some engines.
+    return {Y: parseInt(v.year, 10), mo: parseInt(v.month, 10),
+            d: parseInt(v.day, 10), H: parseInt(v.hour, 10) % 24,
+            M: parseInt(v.minute, 10), S: parseInt(v.second, 10)};
+  }
+  function pad2(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+  function strftime(format, ts) {
+    var p = zoneParts(ts);
+    var h12 = (p.H % 12 === 0) ? 12 : p.H % 12;
+    return format.replace(/%(-?)([a-zA-Z%])/g, function(all, dash, c) {
+      var n = {H: p.H, I: h12, M: p.M, S: p.S, d: p.d, m: p.mo}[c];
+      if (n !== undefined) {
+        return dash ? String(n) : pad2(n);
+      }
+      if (c === 'p') {
+        return p.H < 12 ? CLOCK.am : CLOCK.pm;
+      }
+      if (c === 'b' || c === 'B') {
+        return (c === 'b' ? CLOCK.months : CLOCK.months_full)[p.mo - 1];
+      }
+      if (c === 'a' || c === 'A') {
+        // The weekday of the instant's STATION-ZONE date, indexed as
+        // getUTCDay() does (Sunday first), which is the order the report
+        // sends the names in.
+        var wd = new Date(Date.UTC(p.Y, p.mo - 1, p.d)).getUTCDay();
+        return (c === 'a' ? CLOCK.weekdays : CLOCK.weekdays_full)[wd];
+      }
+      if (c === 'Y') {
+        return String(p.Y);
+      }
+      if (c === 'y') {
+        return pad2(p.Y % 100);
+      }
+      return c === '%' ? '%' : all;
+    });
+  }
   function fmtHMS(ts) {
-    // The header's "updated" stamp: BYTE-IDENTICAL to the template's
-    // first paint, which renders %H:%M:%S of the generation instant in
-    // the station's zone, for the same reason as fmtHM below -- the
-    // first packet must not reformat what the report painted.
-    // Through 8.3.4 this was LOCALE-formatted (an English page read
-    // "03:11:22 PM"), which no
-    // template can bake byte for byte across locales; 24-hour matches
-    // the chip details beside it.
-    return new Date(ts * 1000).toLocaleString('en-GB',
-      tzOptions({hour: '2-digit', minute: '2-digit', second: '2-digit',
-                 hour12: false}));
+    // The header's "updated" stamp: the report's clock format with
+    // seconds, as the template bakes it (clock_stamp).
+    return strftime(CLOCK.stamp, ts);
   }
   function fmtHM(ts) {
-    // The countdown chips' event-time detail: BYTE-IDENTICAL to the
-    // template's first paint, which renders %H:%M in the station's zone
-    // -- the first live rewrite must not reformat what the report
-    // painted (no seconds, no locale AM/PM: en-GB with hour12 off is
-    // 24-hour HH:MM in every browser).  The remaining-time value above
-    // it is the hh:mm:ss-shaped number; the two must not wear the same
-    // dress.
-    return new Date(ts * 1000).toLocaleString('en-GB',
-      tzOptions({hour: '2-digit', minute: '2-digit', hour12: false}));
+    // A clock time: the countdown chips' event-time detail, and the time
+    // half of a date with its time (celestial_page's _hm).
+    return strftime(CLOCK.time, ts);
+  }
+  function fmtDayHM(ts) {
+    // A date with its clock time, joined as the report joins them
+    // (celestial_page's _date_hm; English "Sep 15, 3:53 PM").
+    return fmt('{date}, {time}', {date: strftime(CLOCK.date, ts), time: fmtHM(ts)});
+  }
+  // A number and the unit symbol after it, joined by a no-break space
+  // (celestial_page's _keep_units, weewx-skyfield's rule): one to three
+  // letters after the space and no more.  Built at run time, because a
+  // \p{...} literal is a syntax error to an engine without Unicode
+  // property escapes, and would take the whole script with it; such an
+  // engine gets the Latin letters.
+  var UNIT_GAP;
+  try {
+    UNIT_GAP = new RegExp('(\\p{Nd}) (?=[\\p{L}\\p{Nl}\\p{No}]{1,3}(?![\\p{L}\\p{Nl}\\p{No}]))', 'gu');
+  } catch (e) {
+    UNIT_GAP = /(\d) (?=[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F]{1,3}(?![A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F]))/g;
+  }
+  function keepUnits(text) {
+    return String(text).replace(UNIT_GAP, '$1\u00A0');
   }
   function numberWithCommas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
+  // Scratch for setHtml's comparison: never attached to the document.
+  var htmlProbe = document.createElement('div');
   function setHtml(id, html) {
     var el = document.getElementById(id);
     if (el && html !== undefined && html !== null) {
-      el.innerHTML = html;
+      // Every packet re-renders every cell, and most are unchanged.  An
+      // innerHTML write replaces the children even when the markup is
+      // identical, and the page repaints -- the chips flickered on every
+      // packet.  So write only on a difference, judged by the browser's
+      // own serialization of the new markup: the raw string would never
+      // match once the browser has normalized an entity such as &nbsp;.
+      htmlProbe.innerHTML = html;
+      if (htmlProbe.innerHTML !== el.innerHTML) {
+        el.innerHTML = html;
+      }
+    }
+  }
+  function setText(el, text) {
+    // The same rule for plain text -- a dial label or a mark's <title>,
+    // re-rendered every packet and every tick -- compared exactly, since
+    // there is no markup for the browser to normalize.
+    if (el.textContent !== text) {
+      el.textContent = text;
     }
   }
   function num(r, key) {
@@ -399,9 +496,12 @@ var celestial = (function () {
         m.dot = svgEl('circle', {r: 8, 'class': 'cel-geodot cel-fill-sun'}, g);
       } else if (key === 'moon') {
         // True-phase disc: dark disc, lit limb/terminator path, silver rim
-        // (the rim keeps a new moon visible against the card).
-        m.dot = svgEl('circle', {r: 8, 'class': 'cel-moon-dark'}, g);
-        m.lit = svgEl('path', {'class': 'cel-moon-lit'}, g);
+        // (the rim keeps a new moon visible against the card).  The disc
+        // has its own group so it can dim as one image below the horizon
+        // while the rim, outside it, stays strong enough to find.
+        var disc = svgEl('g', {'class': 'cel-moon-disc'}, g);
+        m.dot = svgEl('circle', {r: 8, 'class': 'cel-moon-dark'}, disc);
+        m.lit = svgEl('path', {'class': 'cel-moon-lit'}, disc);
         m.rim = svgEl('circle', {r: 8, 'class': 'cel-moon-rim', fill: 'none'}, g);
       } else {
         m.dot = svgEl('circle', {r: 6.5, 'class': 'cel-geodot cel-fill-' + key}, g);
@@ -580,7 +680,7 @@ var celestial = (function () {
     if (text.length !== prev.length) {
       i = 0;
     }
-    el.innerHTML = text.slice(0, i) + '<span class="chg">' + text.slice(i) + '</span>';
+    el.innerHTML = text.slice(0, i) + '<span class="cel-chg">' + text.slice(i) + '</span>';
     prevOdometer[id] = text;
   }
   function setRowBelow(key, below) {
@@ -644,7 +744,7 @@ var celestial = (function () {
       if (auRate !== null) {
         var perSec = Math.abs(auRate) * PER_AU;
         setHtml('geo-rate-' + key,
-                '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
+                '<span class="cel-arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
                 T[auRate >= 0 ? 'receding' : 'approaching'] + ' ' +
                 perSec.toFixed(2) + DIST_LABEL + '/s');
       }
@@ -691,15 +791,15 @@ var celestial = (function () {
         m.glow.setAttribute('display', below ? 'none' : '');
       }
       m.lab.setAttribute('class', below ? 'bodylab cel-dim' : 'bodylab');
-      m.title.textContent = m.label + ' \u00B7 ' +
+      setText(m.title, m.label + ' \u00B7 ' +
           (below ? T['below horizon']
                  : fmt('alt {alt}\u00B0', {alt: altNow.toFixed(1)})) +
           ' \u00B7 ' +
           fmt('{dist} au',
-              {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)});
+              {dist: auNow >= 1000 ? auNow.toFixed(1) : auNow.toFixed(6)}));
       if (key === 'proxima_centauri') {
-        m.lab.textContent = m.label + ' \u00B7 ' +
-                            fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)});
+        setText(m.lab, m.label + ' \u00B7 ' +
+                       fmt('{ly} ly', {ly: (auNow / AU_PER_LY).toFixed(2)}));
       }
       placeBodyLabel(m.lab, azNow, r);
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
@@ -737,7 +837,7 @@ var celestial = (function () {
       if (auRate !== null) {
         var perSec = Math.abs(auRate) * PER_AU;
         setHtml('geo-rate-' + key,
-                '<span class="arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
+                '<span class="cel-arr">' + (auRate >= 0 ? '\u25B2' : '\u25BC') + '</span> ' +
                 T[auRate >= 0 ? 'receding' : 'approaching'] + ' ' +
                 perSec.toFixed(2) + DIST_LABEL + '/s');
       }
@@ -752,7 +852,7 @@ var celestial = (function () {
         return;
       }
       m.label = satLabel(key);
-      m.lab.textContent = m.label;
+      setText(m.lab, m.label);
       if (azNow === null || altNow === null || auNow === null) {
         m.g.setAttribute('display', 'none');
         m.lab.setAttribute('display', 'none');
@@ -812,7 +912,7 @@ var celestial = (function () {
       if (mag !== null) {
         tip += ' \u00B7 ' + fmt('mag {mag}', {mag: mag.toFixed(1)});
       }
-      m.title.textContent = tip;
+      setText(m.title, tip);
       placeBodyLabel(m.lab, azNow, r);
       drawTrail(m.segs, azNow, auNow, altNow, azRate, auRate, altRate);
     });
@@ -863,6 +963,16 @@ var celestial = (function () {
     var wrap = document.getElementById('dome-svg');
     return wrap === null ? null : wrap.querySelector('svg');
   }
+  // A mark's labels, plural: weewx-skyfield 2.5 lays the labels out once
+  // per label scale inside the one chart (a layer per scale, one shown
+  // by a media rule in the chart's own style), so a body's label is one
+  // element per layer, and every copy must move with its mark -- the
+  // hidden layer becomes the visible one the moment the viewer turns a
+  // phone.  On an older chart the array holds one.
+  function labelsFor(svg, key) {
+    return Array.prototype.slice.call(
+      svg.querySelectorAll('text[data-body="' + key + '"]'));
+  }
   function hasKey(key) {
     return latest !== null && Object.prototype.hasOwnProperty.call(latest, key);
   }
@@ -900,7 +1010,7 @@ var celestial = (function () {
         return;
       }
       domeBase[key] = {g: g,
-                       lab: svg.querySelector('text[data-body="' + key + '"]'),
+                       labs: labelsFor(svg, key),
                        x: parseFloat(c.getAttribute('cx')),
                        y: parseFloat(c.getAttribute('cy'))};
     });
@@ -994,17 +1104,15 @@ var celestial = (function () {
       if (altNow <= 0) {
         // Set since generation: hide rather than pin to the rim.
         setShown(b.g, false);
-        setShown(b.lab, false);
+        b.labs.forEach(function(l) { setShown(l, false); });
         return;
       }
       setShown(b.g, true);
-      setShown(b.lab, true);
+      b.labs.forEach(function(l) { setShown(l, true); });
       var p = domeXY(azNow, altNow);
       var tr = 'translate(' + (p[0] - b.x).toFixed(1) + ' ' + (p[1] - b.y).toFixed(1) + ')';
       b.g.setAttribute('transform', tr);
-      if (b.lab !== null) {
-        b.lab.setAttribute('transform', tr);
-      }
+      b.labs.forEach(function(l) { l.setAttribute('transform', tr); });
     });
     renderSats(svg);
   }
@@ -1020,7 +1128,7 @@ var celestial = (function () {
   // better idea): easing the marker toward each packet's anchor
   // (first-order glide, TAU 0.8 and 1.6 both shot and compared) to
   // kill the small extrapolate-then-correct zigzag at culmination.
-  // John judged the cure worse than the disease on the pass chart:
+  // The cure is worse than the disease on the pass chart:
   // the lag pulls the dot visibly off the drawn arc -- a sustained
   // error against a truth reference, where the zigzag is fast noise
   // centered on it.  The zigzag is accepted: per-packet anchors are
@@ -1029,11 +1137,32 @@ var celestial = (function () {
     var lab = strAt('almanac.' + name + '.label');
     return lab !== null ? lab : name.charAt(0).toUpperCase() + name.slice(1);
   }
+  // The name is drawn once per label layer, inside that layer's group, at
+  // the size weewx-skyfield gives a body label at that layer's scale
+  // (11 px x scale, its body_px), so the one the viewport shows is the
+  // same size as the names around it and turns with them.  With no
+  // class-set size in the stylesheet, a lone name in the mark's group
+  // took the browser's 16 px default: nearly twice a 0.8 layer's body labels,
+  // two-thirds of a 2.2 layer's.  A chart without layers gets one name
+  // at 11 px beside its dot.
+  var BODY_LABEL_PX = 11;
   function buildSatMark(svg) {
     var g = svgEl('g', {display: 'none'}, svg);
+    var layers = svg.querySelectorAll('g.dome-labels');
+    var labs = [];
+    for (var i = 0; i < layers.length; i++) {
+      var scale = parseFloat(layers[i].getAttribute('data-label-scale'));
+      labs.push(svgEl('text', {'class': 'satlab', display: 'none',
+                               style: 'font-size:' + (BODY_LABEL_PX * (isFinite(scale) ? scale : 1)).toFixed(1) + 'px'},
+                      layers[i]));
+    }
+    if (labs.length === 0) {
+      labs.push(svgEl('text', {'class': 'satlab',
+                               style: 'font-size:' + BODY_LABEL_PX.toFixed(1) + 'px'}, g));
+    }
     return {g: g,
             dot: svgEl('circle', {r: 4, 'class': 'cel-satdot'}, g),
-            lab: svgEl('text', {'class': 'satlab'}, g)};
+            labs: labs};
   }
   function localDayNum(ts) {
     // The instant's DISPLAY-ZONE calendar date, as a day number to
@@ -1059,10 +1188,13 @@ var celestial = (function () {
       return T['just set'];
     }
     if (delta < 3600) {
-      return fmt('in {m} min', {m: Math.max(1, Math.floor(delta / 60))});
+      return keepUnits(fmt('in {m} m', {m: Math.max(1, Math.floor(delta / 60))}));
     }
+    // Every rung FLOORS, matching weewx-skyfield's _sat_when: rounding
+    // the hours let 86399 s read "in 24 h", one second before the day
+    // rung says "in 1 day".
     if (delta < 86400) {
-      return fmt('in {h} h', {h: Math.round(delta / 3600)});
+      return keepUnits(fmt('in {h} h', {h: Math.floor(delta / 3600)}));
     }
     // Whole days is a CALENDAR-day difference, not elapsed seconds
     // divided down: renderPassRow puts this count on the same line as
@@ -1078,11 +1210,6 @@ var celestial = (function () {
     // has already ruled out anything under a day.
     var n = Math.max(1, localDayNum(riseTs) - localDayNum(nowTs));
     return n === 1 ? fmt('in {n} day', {n: 1}) : fmt('in {n} days', {n: n});
-  }
-  function fmtDayHM(ts) {
-    return new Date(ts * 1000).toLocaleString(LOCALE,
-      tzOptions({month: 'short', day: 'numeric',
-                 hour: '2-digit', minute: '2-digit'}));
   }
   function renderPassRow(base, lineId, passId, noPassMsg, sunlit, nowTs, tagVisibility) {
     // One roster row from a pass chain (base runs through .next_pass or
@@ -1120,9 +1247,9 @@ var celestial = (function () {
         culmOrd === null || setOrd === null) {
       return;
     }
-    var sub = fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} min',
-                  {rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),
-                   set: esc(setOrd), m: Math.round(dur / 60).toString()});
+    var sub = keepUnits(fmt('appears {rise} \u00B7 peaks {alt}\u00B0 {culm} \u00B7 disappears {set} \u00B7 {m} m',
+                            {rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),
+                             set: esc(setOrd), m: Math.round(dur / 60).toString()}));
     if (tagVisibility) {
       var vis = latest[base + '.visible'];
       if (vis === true) {
@@ -1219,6 +1346,13 @@ var celestial = (function () {
         if (m && m.g && m.g.parentNode !== null) {
           m.g.parentNode.removeChild(m.g);
         }
+        if (m && m.labs) {
+          m.labs.forEach(function(l) {
+            if (l.parentNode !== null) {
+              l.parentNode.removeChild(l);
+            }
+          });
+        }
         // (the generated marks were un-hidden by the sweep above)
       });
       satMarks = null;
@@ -1255,18 +1389,17 @@ var celestial = (function () {
       if (stat !== null) {
         stat.setAttribute('display', 'none');
       }
-      var statLab = svg.querySelector('text[data-body="' + name + '"]');
-      if (statLab !== null) {
-        statLab.setAttribute('display', 'none');
-      }
+      labelsFor(svg, name).forEach(function(l) { l.setAttribute('display', 'none'); });
       if (m === undefined) {
         return;
       }
       if (!overhead) {
         m.g.setAttribute('display', 'none');
+        m.labs.forEach(function(l) { l.setAttribute('display', 'none'); });
         return;
       }
       m.g.removeAttribute('display');
+      m.labs.forEach(function(l) { l.removeAttribute('display'); });
       var p = domeXY(azNow, altNow);
       m.dot.setAttribute('cx', p[0].toFixed(1));
       m.dot.setAttribute('cy', p[1].toFixed(1));
@@ -1286,11 +1419,13 @@ var celestial = (function () {
       var daylight = (sunAlt !== null && sunAlt >= -6);
       m.dot.setAttribute('class', 'cel-satdot' + (shadowed ? ' cel-shadow' : '')
                                            + (daylight ? ' cel-faint' : ''));
-      m.lab.setAttribute('class',
-                         (shadowed || daylight) ? 'satlab cel-faint' : 'satlab');
-      m.lab.textContent = satLabel(name);
-      m.lab.setAttribute('x', (p[0] + 8).toFixed(1));
-      m.lab.setAttribute('y', (p[1] - 6).toFixed(1));
+      m.labs.forEach(function(l) {
+        l.setAttribute('class',
+                       (shadowed || daylight) ? 'satlab cel-faint' : 'satlab');
+        setText(l, satLabel(name));
+        l.setAttribute('x', (p[0] + 8).toFixed(1));
+        l.setAttribute('y', (p[1] - 6).toFixed(1));
+      });
     });
   }
   function domeFragMeta() {
@@ -1963,7 +2098,7 @@ var celestial = (function () {
     // shows, so no fetch is owed and none goes out.  That is the
     // doctrine, not an oversight -- a station whose loop feed is not
     // working has no live layer at all, and the LIVE badge is where that
-    // fault is reported (John, 2026-08-17).  When a
+    // fault is reported.  When a
     // feed DIES its clock stops with it, so this stops firing -- which
     // is right for THIS test: a stopped clock cannot judge, and the
     // dead-feed case is handled where it belongs, in renderDome, which
@@ -2007,7 +2142,7 @@ var celestial = (function () {
     // a fallback that could be wrong by hours.  So the page's time
     // advances at loop cadence and stops when the feed does -- a station
     // whose loop feed is not working has no working live layer, and the
-    // LIVE badge is where that fault is reported (John, 2026-08-16).
+    // LIVE badge is where that fault is reported.
     // The browser is asked only how long something took (packetAge and
     // the fetch throttles: a difference between two of its own readings,
     // immune to any skew), never what time it is.
@@ -2067,16 +2202,8 @@ var celestial = (function () {
     // on a sky that has not moved for an hour.  The DATE comes along
     // once the backdrop is not from the reference clock's own day: a
     // report cycle stalled overnight would otherwise say "from 12:00"
-    // of a day it never names.  Intl does the wording, so this costs no
-    // translation.
-    var d = new Date(ts * 1000);
-    var opts = {hour: '2-digit', minute: '2-digit'};
-    if (new Date(refTs * 1000).toLocaleDateString(LOCALE, tzOptions({}))
-        !== d.toLocaleDateString(LOCALE, tzOptions({}))) {
-      opts.month = 'short';
-      opts.day = 'numeric';
-    }
-    return d.toLocaleString(LOCALE, tzOptions(opts));
+    // of a day it never names.
+    return localDayNum(ts) === localDayNum(refTs) ? fmtHM(ts) : fmtDayHM(ts);
   }
   function domeAsking(nowTs) {
     // "The page is still asking, so it is not yet answering."  A fetch
@@ -2197,7 +2324,7 @@ var celestial = (function () {
     }
     var ds = g.getAttribute('data-sunlit');
     passBase = {tag: tag, g: g, c: c,
-                lab: svg.querySelector('text[data-body="' + tag + '"]'),
+                labs: labelsFor(svg, tag),
                 x: parseFloat(c.getAttribute('cx')),
                 y: parseFloat(c.getAttribute('cy')),
                 cls: c.getAttribute('class'),
@@ -2294,7 +2421,7 @@ var celestial = (function () {
       b.asDrawn = false;
     }
     setShown(b.g, shown);
-    setShown(b.lab, shown);
+    b.labs.forEach(function(l) { setShown(l, shown); });
   }
   function passStandsAsDrawn(b) {
     // The chart is a prediction: the dot at its generated position, in
@@ -2314,9 +2441,7 @@ var celestial = (function () {
     b.asDrawn = true;
     b.g.removeAttribute('transform');
     passDotLit(b, b.genLit);
-    if (b.lab !== null) {
-      b.lab.removeAttribute('transform');
-    }
+    b.labs.forEach(function(l) { l.removeAttribute('transform'); });
     passMarkShown(b, true);
   }
   function passDotLit(b, lit) {
@@ -2369,8 +2494,8 @@ var celestial = (function () {
       // that until the first packet lands -- normally refresh_rate
       // seconds later, but for as long as the feed stays down, since
       // nothing else here can set `latest`.  A station whose loop feed is
-      // not working has no working pass panel either; John's ruling of
-      // 2026-08-16, and what lets the verdict below be a plain
+      // not working has no working pass panel either -- the doctrine
+      // again, and what lets the verdict below be a plain
       // comparison of two station-written times with nothing remembered
       // and nothing to police.  (8.3.4 restored the drawn state here on
       // every tick -- six attribute writes a second on a chart nothing
@@ -2457,9 +2582,7 @@ var celestial = (function () {
     // passStandsAsDrawn, which needs to know it has work to do.
     b.asDrawn = false;
     b.g.setAttribute('transform', tr);
-    if (b.lab !== null) {
-      b.lab.setAttribute('transform', tr);
-    }
+    b.labs.forEach(function(l) { l.setAttribute('transform', tr); });
   }
   function refreshPass() {
     if (pageTimedOut) {
@@ -2565,22 +2688,24 @@ var celestial = (function () {
   // -- close enough to count meaningfully.
   var CHIP_WINDOW_SEC = 30 * 86400;
   function fmtDHMS(sec) {
-    // The countdown's precision follows its horizon: a day or more out
-    // it reads days-hours-minutes, moving by the minute (seconds --
-    // and a seconds-bearing clock shape -- are noise at that range, and
-    // the chip's detail carries the actual date); inside the final day
-    // it becomes the hh:mm:ss clock, where seconds are the point.
+    // A countdown: one symbol per unit and the two largest units that
+    // matter -- days and hours a day or more out, hours and minutes
+    // inside a day, minutes inside an hour, seconds in the last minute
+    // -- never an hh:mm:ss clock face, which reads as a time of day.
+    // celestial_page's _dhms first-paints the same text.
     sec = Math.max(0, Math.floor(sec));
-    var days = Math.floor(sec / 86400);
-    var rem = sec - days * 86400;
-    var hh = Math.floor(rem / 3600);
-    var mm = Math.floor((rem - hh * 3600) / 60);
-    if (days >= 1) {
-      return fmt('{d}d {h}h {m}m', {d: days, h: hh, m: mm});
+    if (sec >= 86400) {
+      return keepUnits(fmt('{d} d {h} h', {d: Math.floor(sec / 86400),
+                                           h: Math.floor(sec % 86400 / 3600)}));
     }
-    var ss = rem - hh * 3600 - mm * 60;
-    return ('0' + hh).slice(-2) + ':' + ('0' + mm).slice(-2) + ':' +
-           ('0' + ss).slice(-2);
+    if (sec >= 3600) {
+      return keepUnits(fmt('{h} h {m} m', {h: Math.floor(sec / 3600),
+                                           m: Math.floor(sec % 3600 / 60)}));
+    }
+    if (sec >= 60) {
+      return keepUnits(fmt('{m} m', {m: Math.floor(sec / 60)}));
+    }
+    return keepUnits(fmt('{s} s', {s: sec}));
   }
   function chipShow(id, show) {
     var el = document.getElementById(id);
@@ -3055,8 +3180,7 @@ var celestial = (function () {
           // these from the BROWSER's clock, which is the one clock this
           // page may not read; the skin's own declaration (its `clock`
           // group) always carries current.dateTime.raw, so a feed doing
-          // this is misconfigured and the badge says so.  (John,
-          // 2026-08-16.)
+          // this is misconfigured and the badge says so.
           setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
           console.log('loop record has no current.dateTime.raw; ignored');
           return;
@@ -3238,10 +3362,9 @@ var celestial = (function () {
     GEN_TS = config.gen_ts;
     PER_AU = config.per_au;
     DIST_LABEL = config.dist_label;
-    // The report's language drives toLocaleString (the satellite rosters'
-    // pass times and the frozen-sky line's time; the header's "updated"
-    // stamp and the chip details are 24-hour in every language, matching
-    // the template's bake); an unknown tag must not break every render.
+    // The report's language tag.  Since 9.5 no clock time or date is
+    // formatted through it (config.clock carries the report's own
+    // formats), but an unknown tag must still never break the page.
     LOCALE = config.locale;
     try {
       new Date().toLocaleString(LOCALE);
@@ -3261,6 +3384,7 @@ var celestial = (function () {
     BODY_LABELS = config.body_labels || {};
     CARDINALS = config.cardinals || [];
     T = config.texts || {};
+    CLOCK = config.clock;
     // The satellite set follows the station's [Skyfield] [[Satellites]]
     // and the comet set its [[Comets]], both enumerated by the report
     // through weewx-skyfield's public satellite_names()/comet_names();
@@ -3277,6 +3401,9 @@ var celestial = (function () {
     // check loop_data_file, naming the option, once the label has parsed.
     LOOP_DATA_FILE = config.loop_data_file;
     PAGE_THEME = config.theme;
+    // False when the page's own script drives the countdown chips: this
+    // one then never touches them, so the two cannot overwrite each other.
+    COUNTDOWN = config.countdown;
     DEAD_FEED = Math.max(EXTRAP_MAX, 20 * refresh_rate);
 
     // The timers, load handlers and listeners, in one place and in this

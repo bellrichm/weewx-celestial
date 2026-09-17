@@ -117,7 +117,9 @@ EMPTY, which is the page's signal to say so and point at weewx-skyfield.
 import datetime
 import functools
 import json
+import locale
 import logging
+import math
 import os
 import re
 import time
@@ -160,6 +162,36 @@ DEFAULT_PREFIX = 'dome-svg'
 # letters, digits, - _ . -- never a slash, a quote or a leading dot.
 _PLAIN_NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
 _DIRECTORY_RE = re.compile(r'%s(/%s)*/?' % (_PLAIN_NAME_RE.pattern, _PLAIN_NAME_RE.pattern))
+
+# What weewx-skyfield 2.5 accepts as a label layer's media query, checked
+# here too so a bad one is refused when [CelestialFragments] is read,
+# naming the set, like every other bad value in that section -- rather
+# than raising inside every dome and chart draw, which leaves the
+# generator writing nothing and the page saying only "could not be
+# drawn".  The query is written into the chart's own <style> inside an
+# SVG inside HTML, where `<` and `&` are markup (so Level 4 range syntax
+# is out), and an unbalanced `(` would swallow every later rule.  A copy
+# of skyfield's rule, held to it by an in-step test that sweeps inputs
+# through both.
+_MEDIA_QUERY_RE = re.compile(r'^[A-Za-z0-9 :(),.-]+$')
+
+
+def _media_query_usable(query: str) -> bool:
+    """Whether weewx-skyfield would accept `query` (already stripped) as a
+    label layer's media query: its characters, and balanced parentheses."""
+    if not _MEDIA_QUERY_RE.match(query):
+        return False
+    depth = 0
+    for ch in query:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
 # The default set's pass fragment keeps the name every 8.x page fetches.
 DEFAULT_PASS_NAME = 'pass-chart.txt'
 
@@ -235,12 +267,12 @@ LIVE_TEXTS = (
     # the honest empty states -- shared verbatim with weewx-skyfield's Sky
     # page (its translations are mined into this skin's lang files).
     'overhead now',
-    'in {m} min',
+    'in {m} m',
     'in {h} h',
     'in {n} day',
     'in {n} days',
     'just set',
-    'appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min',
+    'appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
     'no visible pass in the coming week',
     'no pass in the coming week',
     'visible',
@@ -262,7 +294,11 @@ LIVE_TEXTS = (
     'Earth aphelion',
     'supermoon',
     'appears in',
-    '{d}d {h}h {m}m',
+    '{d} d {h} h',
+    '{h} h {m} m',
+    '{m} m',
+    '{s} s',
+    '{date}, {time}',
     'lunar eclipse',
     'solar eclipse',
     'penumbral',
@@ -427,15 +463,35 @@ def distance_unit(alm: Any) -> Tuple[float, str]:
             str(alm.formatter.get_label_string(unit)))
 
 
-def _hms(rem: int) -> str:
-    """hh:mm:ss of a remaining time in seconds, inside the final day."""
-    return '%02d:%02d:%02d' % (rem % 86400 // 3600, rem % 3600 // 60, rem % 60)
+# A number and the unit symbol after it, joined by a no-break space so a
+# narrow cell never wraps "10" and "m" onto two lines.  One to three
+# letters after the space and no more, so "in 2 days" keeps its ordinary
+# space.  weewx-skyfield's _UNIT_GAP and _keep_units, copied; a test
+# sweeps inputs through both, and celestial.js's keepUnits is the same.
+_UNIT_GAP = re.compile(r'(\d) (?=[^\W\d_]{1,3}(?![^\W\d_]))')
 
 
-def _hm(ts: float) -> str:
-    """The station-local clock time of an instant, as the chips' detail
-    cell and the javascript's fmtHM paint it."""
-    return time.strftime('%H:%M', time.localtime(ts))
+def _keep_units(text: str) -> str:
+    return _UNIT_GAP.sub('\\1\u00a0', text)
+
+
+def _clock_format(fmt: str) -> str:
+    """fmt, made 24-hour when the report's locale has no AM/PM.  English
+    prints clock times 12-hour and the format is a [Texts] key, but %p
+    comes from the locale WeeWX set for the report, not from the lang
+    file, and most non-English locales define it as nothing: an English
+    report there would print a bare, ambiguous '8:45 '.
+    weewx-skyfield's _clock_format, copied; a test sweeps formats through
+    both."""
+    if '%p' not in fmt:
+        return fmt
+    try:
+        blank = locale.nl_langinfo(locale.AM_STR) == ''
+    except AttributeError:  # platform without nl_langinfo
+        blank = False
+    if not blank:
+        return fmt
+    return re.sub(r'\s*%p', '', re.sub(r'%-?I:%M', '%H:%M', fmt))
 
 
 def _soonest(first: Any, second: Any) -> Tuple[Any, Optional[int]]:
@@ -500,13 +556,27 @@ class FragmentSet(NamedTuple):
     that puts the dome on one page and the chart on another, at
     different label scales, needs a set for each; without `kind` each of
     them would write the other's fragments every cycle for nobody to
-    fetch."""
+    fetch.
+
+    A set may carry a second label scale for narrow screens (9.3):
+    `narrow_label_scale` and `narrow_media`, the CSS media query that
+    selects it -- `(max-width: 600px)` for a phone.  Both go to
+    weewx-skyfield 2.5's `label_layers`, which lays the labels out once
+    per scale INSIDE the one drawing (the collision layout depends on
+    the size, which is why a CSS rescale would not do) and switches
+    layers with a media rule in the chart's own style block; the dots,
+    markers and rings are drawn once, since label_scale reaches only
+    the text.  One fragment serves every screen; nothing is refetched
+    for it.  9.3 requires weewx-skyfield 2.5 (the installer refuses an
+    older one), so the layer goes straight through."""
     name: str
     prefix: str
     label_scale: float
     theme: Optional[str]
     directory: str = ''
     kind: str = 'both'
+    narrow_label_scale: float = 0.0
+    narrow_media: str = ''
 
 
 DEFAULT_SET = FragmentSet('', DEFAULT_PREFIX, 1.0, None)
@@ -592,7 +662,7 @@ def fragment_sets(skin_dict: Any) -> List[FragmentSet]:
             label_scale = float(sub.get('label_scale', 1.0))
         except (TypeError, ValueError):
             label_scale = 0.0
-        if not label_scale > 0:
+        if not (math.isfinite(label_scale) and label_scale > 0):
             # skyfield multiplies every label's size by it: zero or less
             # is a dome with no labels, silently.
             raise ValueError('[CelestialFragments] [[%s]] label_scale = %r is not a positive number'
@@ -614,8 +684,46 @@ def fragment_sets(skin_dict: Any) -> List[FragmentSet]:
         if kind not in ('both', 'dome', 'pass'):
             raise ValueError('[CelestialFragments] [[%s]] kind = %r is not both, dome or pass'
                              % (name, sub.get('kind')))
+        # The narrow-screen label layer: both keys or neither, each judged
+        # here exactly as weewx-skyfield will judge it at draw time (see
+        # _MEDIA_QUERY_RE), so nothing this accepts fails there.  An
+        # unquoted comma is caught first: ConfigObj turns it into a list.
+        # The scale must be a finite positive number that PRINTS
+        # differently from label_scale -- skyfield names a layer by its
+        # scale in %g form, so 1 and 1.0000001 are one layer twice, and it
+        # refuses them.
+        narrow_raw = sub.get('narrow_label_scale', '')
+        media_raw = sub.get('narrow_media', '')
+        if isinstance(media_raw, (list, tuple)):
+            raise ValueError('[CelestialFragments] [[%s]] narrow_media = %r is a list; a media '
+                             'query containing a comma must be quoted' % (name, media_raw))
+        narrow_media = str(media_raw or '').strip()
+        narrow_scale = 0.0
+        if narrow_raw not in ('', None):
+            try:
+                narrow_scale = float(narrow_raw)
+            except (TypeError, ValueError):
+                narrow_scale = 0.0
+            if not (math.isfinite(narrow_scale) and narrow_scale > 0):
+                raise ValueError('[CelestialFragments] [[%s]] narrow_label_scale = %r is not a '
+                                 'positive number' % (name, narrow_raw))
+            if '%g' % narrow_scale == '%g' % label_scale:
+                raise ValueError('[CelestialFragments] [[%s]] narrow_label_scale = %r is the '
+                                 "set's label_scale; a second layer needs a different scale"
+                                 % (name, narrow_raw))
+        if bool(narrow_scale) != bool(narrow_media):
+            raise ValueError('[CelestialFragments] [[%s]] declares %s without %s; the narrow '
+                             'layer takes both, the scale and the media query that selects it'
+                             % (name, 'narrow_label_scale' if narrow_scale else 'narrow_media',
+                                'narrow_media' if narrow_scale else 'narrow_label_scale'))
+        if narrow_media and not _media_query_usable(narrow_media):
+            raise ValueError('[CelestialFragments] [[%s]] narrow_media = %r is not a usable media '
+                             "query: it is written into the chart's own <style>, so it may "
+                             'contain only letters, digits, spaces and : ( ) , . -, with its '
+                             "parentheses balanced -- for example '(max-width: 600px)'"
+                             % (name, media_raw))
         sets.append(FragmentSet(str(name), prefix, label_scale, theme,
-                                directory.rstrip('/'), kind))
+                                directory.rstrip('/'), kind, narrow_scale, narrow_media))
     if not sets:
         return [DEFAULT_SET]
     # Compare the FILES, not the prefixes: dome-svg beside dome-svg-1, or
@@ -810,14 +918,22 @@ class CelestialPage:
     # finds no root element for it and leaves it alone.
 
     def _dhms(self, rem: int) -> str:
-        """A countdown's shape, mirroring the javascript's fmtDHMS
-        exactly (the first paint IS what the script would render for
-        the generation instant): days-hours-minutes a day or more out,
-        the hh:mm:ss clock inside the final day."""
+        """A countdown's text, mirroring the javascript's fmtDHMS exactly
+        (the first paint IS what the script would render for the
+        generation instant): one symbol per unit and the two largest
+        units that matter -- days and hours a day or more out, hours and
+        minutes inside a day, minutes inside an hour, seconds in the last
+        minute -- each number joined to its unit by a no-break space.
+        Never an hh:mm:ss clock face, which reads as a time of day."""
         if rem >= 86400:
-            return self._t('{d}d {h}h {m}m', d=rem // 86400, h=rem % 86400 // 3600,
-                           m=rem % 3600 // 60)
-        return _hms(rem)
+            text = self._t('{d} d {h} h', d=rem // 86400, h=rem % 86400 // 3600)
+        elif rem >= 3600:
+            text = self._t('{h} h {m} m', h=rem // 3600, m=rem % 3600 // 60)
+        elif rem >= 60:
+            text = self._t('{m} m', m=rem // 60)
+        else:
+            text = self._t('{s} s', s=rem)
+        return _keep_units(text)
 
     def _date(self, ts: float) -> str:
         """An event's date, station-local, in the report's [Texts] date
@@ -825,8 +941,54 @@ class CelestialPage:
         return time.strftime(self._t('%b %-d'), time.localtime(ts))
 
     def _date_hm(self, ts: float) -> str:
-        """An event's date and clock time, station-local."""
-        return self._date(ts) + ' ' + _hm(ts)
+        """An event's date and clock time, station-local, joined by the
+        [Texts] key weewx-skyfield's _date_hm uses (English "{date},
+        {time}": "Sep 15, 3:53 PM")."""
+        return self._t('{date}, {time}', date=self._date(ts), time=self._hm(ts))
+
+    def _hm(self, ts: float) -> str:
+        """An instant's station-local clock time in the report's [Texts]
+        clock format -- English 12-hour, the other bundled languages
+        24-hour -- as the javascript's fmtHM paints it."""
+        return time.strftime(_clock_format(self._t('%-I:%M %p')), time.localtime(ts))
+
+    def clock_stamp(self, alm: Any) -> str:
+        """The header's "updated" stamp: the generation instant in the
+        report's clock format with seconds, as the javascript's fmtHMS
+        repaints it.  24-hour if the format cannot be applied: the stamp
+        is chrome, and must never cost the page."""
+        try:
+            return time.strftime(_clock_format(self._t('%-I:%M:%S %p')),
+                                 time.localtime(alm.time_ts))
+        except Exception:
+            return time.strftime('%H:%M:%S', time.localtime(alm.time_ts))
+
+    def _clock_config(self) -> Dict[str, Any]:
+        """What celestial.js's strftime fills a format from, besides the
+        instant: the resolved clock formats, the date format, and the
+        weewxd locale's AM/PM and abbreviated month names -- the strings
+        the report's own strftime calls produce, so the first packet
+        repaints exactly what the report painted."""
+        def at(month: int, hour: int, fmt: str) -> str:
+            return time.strftime(fmt, (2001, month, 15, hour, 0, 0, 0, 1, -1))
+
+        def weekday(js_day: int, fmt: str) -> str:
+            # SUNDAY FIRST, the order javascript's getUTCDay() indexes;
+            # struct_time counts weekdays from Monday, hence the shift.
+            return time.strftime(fmt, (2001, 1, 15, 12, 0, 0, (js_day - 1) % 7, 1, -1))
+        return {'time': _clock_format(self._t('%-I:%M %p')),
+                'stamp': _clock_format(self._t('%-I:%M:%S %p')),
+                'date': self._t('%b %-d'),
+                'am': at(1, 9, '%p'),
+                'pm': at(1, 21, '%p'),
+                'months': [at(month, 12, '%b') for month in range(1, 13)],
+                # The names a date format can ask for beyond %b: a
+                # translator who writes "%a %-d %B" into one of these keys
+                # gets the same text from the report and from the script,
+                # which is the whole point of carrying the formats here.
+                'months_full': [at(month, 12, '%B') for month in range(1, 13)],
+                'weekdays': [weekday(day, '%a') for day in range(7)],
+                'weekdays_full': [weekday(day, '%A') for day in range(7)]}
 
     @staticmethod
     def _chip(chip_id: str, k: str, v: str, d: str, data: str = '',
@@ -857,7 +1019,7 @@ class CelestialPage:
         if ts is not None:
             k = k_first if which == 0 else k_second
             v = self._dhms(max(0, int(ts - now)))
-            d = _hm(ts)
+            d = self._hm(ts)
             data = ' data-ts="%d"' % int(ts)
         return self._chip(chip_id, k, v, d, data, hidden=not k)
 
@@ -1251,7 +1413,8 @@ class CelestialPage:
 
     # -- the script ----------------------------------------------------------
 
-    def config_dict(self, alm: Any, filename: Any = None) -> Dict[str, Any]:
+    def config_dict(self, alm: Any, filename: Any = None,
+                    countdown: Any = True) -> Dict[str, Any]:
         """What celestial.js is started with: every per-report value the
         8.5 include baked into the script, as one dict (config_script
         serializes it).  The keys are contract -- additive only inside a
@@ -1265,13 +1428,23 @@ class CelestialPage:
         HTML_ROOT ('astro/index.html'), from which `root` is the page's
         route up to HTML_ROOT ('../' per level), where every fragment
         set is written.  None (a page that passes nothing) is '' --
-        fetch relative to the page."""
+        fetch relative to the page.  `countdown` False is for a page whose
+        own script drives the countdown chips: celestial.js then never
+        touches them."""
         extras = self.skin_dict.get('Extras', {})
         if not isinstance(extras, dict):
             extras = {}
         texts = almanac_texts(alm)
         ords = alm.formatter.ordinate_names
         per_au, dist_label = distance_unit(alm)
+        try:
+            countdown_on = True if countdown is None else to_bool(countdown)
+        except ValueError:
+            # A typo must not cost the page its whole live layer (the
+            # guard's price for a raise): the chips stay live, and say so.
+            log.warning("config_script: countdown = %r is not a boolean; "
+                        "the countdown chips stay live" % (countdown,))
+            countdown_on = True
         return {
             'version': CELESTIAL_VERSION,
             'page_update_pwd': str(extras.get('page_update_pwd', 'foo')),
@@ -1290,6 +1463,9 @@ class CelestialPage:
             # The language only, as core's $lang serves it: 'en', not
             # 'en_AU.utf8'.
             'locale': str(self.skin_dict.get('lang', 'en')).split('_')[0],
+            # Every clock time and date the javascript writes is built
+            # from these, never from the browser's Intl.
+            'clock': self._clock_config(),
             'body_labels': {b: body_name(texts, b) for b in LABEL_BODIES},
             'cardinals': [str(ords[i]) for i in (0, 4, 8, 12)],
             'texts': {key: self._t(key) for key in LIVE_TEXTS},
@@ -1310,17 +1486,23 @@ class CelestialPage:
             # + the file name, so the page may sit anywhere under
             # HTML_ROOT.
             'root': page_root(filename),
+            # False on a page whose own script drives the countdown chips
+            # (under the same ids): celestial.js then leaves every chip
+            # alone, so two writers cannot fight over them on each packet.
+            'countdown': countdown_on,
         }
 
     @_panel_guard()
-    def config_script(self, alm: Any, filename: Any = None) -> str:
+    def config_script(self, alm: Any, filename: Any = None,
+                      countdown: Any = True) -> str:
         """The page-level <script> block: the config, through json.dumps
         (which backslash-u-escapes non-ASCII, so the report's html_entities
         encoding can never touch a label), and the celestial.start call.
         json.dumps leaves '/' alone, so '</' is escaped by hand: no string
         in the config -- a report name, a password -- can close the block
         early.  Guarded: a failure costs the live layer, never the page."""
-        cfg = json.dumps(self.config_dict(alm, filename), sort_keys=True, indent=2)
+        cfg = json.dumps(self.config_dict(alm, filename, countdown),
+                         sort_keys=True, indent=2)
         return '<script>\ncelestial.start(%s);\n</script>' % cfg.replace('</', '<\\/')
 
     # -- the sky page and the plate ----------------------------------------
@@ -1479,6 +1661,18 @@ class CelestialPage:
             self._memo[key] = self._draw_dome(alm, fs, palette)
         return self._memo[key]
 
+    def _label_kwargs(self, fs: FragmentSet) -> Dict[str, Any]:
+        """The label arguments a set passes to a skyfield chart method:
+        `label_scale` always, and `label_layers=[(scale, query)]` for a
+        set with a narrow layer.  9.3 requires weewx-skyfield 2.5, which
+        takes that argument, so there is no fallback: a skyfield
+        downgraded below it after install raises inside the guarded draw
+        like any other skyfield failure, and the log says so."""
+        kwargs: Dict[str, Any] = {'label_scale': fs.label_scale}
+        if fs.narrow_label_scale:
+            kwargs['label_layers'] = [(fs.narrow_label_scale, fs.narrow_media)]
+        return kwargs
+
     @_panel_guard(label='weewx-skyfield dome_svg')
     def _draw_dome(self, alm: Any, fs: FragmentSet, palette: str) -> str:
         """skyfield's dome for the page, '' when it raises (skyfield's own
@@ -1492,7 +1686,7 @@ class CelestialPage:
         sp = self.sky_page
         if sp is None:
             return ''
-        return str(sp.dome_svg(alm, palette=palette, label_scale=fs.label_scale))
+        return str(sp.dome_svg(alm, palette=palette, **self._label_kwargs(fs)))
 
     def _can_draw(self, alm: Any, fs: FragmentSet) -> bool:
         """Whether the sky can be drawn -- the gate the pass panel and both
@@ -1596,20 +1790,20 @@ class CelestialPage:
         if sset is not None and rise <= now < sset:
             when = self._t('overhead now')
         elif delta < 3600:
-            when = self._t('in {m} min', m=max(1, int(delta // 60)))
+            when = _keep_units(self._t('in {m} m', m=max(1, int(delta // 60))))
         elif delta < 86400:
-            when = self._t('in {h} h', h=int(round(delta / 3600)))
+            when = _keep_units(self._t('in {h} h', h=int(delta // 3600)))
         else:
             days = max(1, (datetime.date.fromtimestamp(rise)
                            - datetime.date.fromtimestamp(now)).days)
             when = self._t('in {n} day', n=1) if days == 1 else self._t('in {n} days', n=days)
         line = self._date_hm(rise) + ' · ' + when
-        sub = self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} min',
-                      rise=_esc(p.rise_azimuth.ordinal_compass()),
-                      alt='%.0f' % p.max_altitude.raw,
-                      culm=_esc(p.culmination_azimuth.ordinal_compass()),
-                      set=_esc(p.set_azimuth.ordinal_compass()),
-                      m='%d' % round(p.duration.raw / 60))
+        sub = _keep_units(self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
+                                  rise=_esc(p.rise_azimuth.ordinal_compass()),
+                                  alt='%.0f' % p.max_altitude.raw,
+                                  culm=_esc(p.culmination_azimuth.ordinal_compass()),
+                                  set=_esc(p.set_azimuth.ordinal_compass()),
+                                  m='%d' % round(p.duration.raw / 60)))
         if tag_visibility:
             if p.visible is True:
                 sub += ' · ' + self._t('visible')
@@ -1905,7 +2099,8 @@ class CelestialPage:
         ts = int(alm.time_ts) + offset
         if palette is None:
             palette = self.palette(alm, fs)
-        svg = sp.dome_svg(alm(almanac_time=ts), palette=palette, label_scale=fs.label_scale)
+        svg = sp.dome_svg(alm(almanac_time=ts), palette=palette,
+                          **self._label_kwargs(fs))
         return self._dome_wrapper(alm, ts, k, step, count, interval, palette, svg)
 
     def pass_fragment(self, alm: Any, fs: FragmentSet = DEFAULT_SET,
@@ -1923,7 +2118,8 @@ class CelestialPage:
             return ''
         if palette is None:
             palette = self.palette(alm, fs)
-        chart = str(sp.pass_chart_html(alm, palette=palette, label_scale=fs.label_scale))
+        chart = str(sp.pass_chart_html(alm, palette=palette,
+                                       **self._label_kwargs(fs)))
         # Wrapped like a dome fragment: the set's plate, which celestial.css
         # styles the chart's labels by, and the report's theme, which the
         # javascript checks for a flip -- so a chart refetched across

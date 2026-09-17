@@ -39,7 +39,7 @@ comet's perihelion.  Each chip is client-side arithmetic on an event instant
 weewx-loopdata computes once and caches until it passes — so a sunset chip
 counts to zero and rolls itself to the next sunrise, with no reload:
 
-![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll-2026-08-18.gif)
+![The countdown row rolling through a sunset](CelestialCountdown-sunset-roll-2026-09-14.gif)
 
 **The Geocentric** — Earth at the center, every body (sun, moon, Mercury
 through Neptune, Proxima Centauri) placed by compass bearing and log
@@ -112,7 +112,7 @@ later.**
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) is
 optional but is what the page is built for: without it you get the
 Geocentric dial on PyEphem's positions and nothing else — no sky dome, no
-pass chart, no comets, no meteor showers.  **If you run it, it must be 2.4
+pass chart, no comets, no meteor showers.  **If you run it, it must be 2.6
 or later**, which this release is pinned to; the installer refuses to
 install beside an older one.  Having none at all is not a refusal.
 
@@ -120,10 +120,10 @@ install beside an older one.  Having none at all is not a refusal.
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    7.0+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.4+, per their instructions.  (The installer refuses to run beside an
+   2.6+, per their instructions.  (The installer refuses to run beside an
    older weewx-loopdata, whose per-report field declaration is the only
    way the page's live values reach it — and beside a weewx-skyfield
-   older than 2.4, which 9.1 is pinned to.)
+   older than 2.6, which 9.4 is pinned to.)
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)
@@ -155,7 +155,7 @@ install beside an older one.  Having none at all is not a refusal.
 The full procedure — including where the loop-data file goes, and how to
 verify the feed afterwards — is in
 **[the manual's Installation page](https://chaunceygardiner.github.io/weewx-celestial/installation.html)**.
-Upgrading from 8.x, 7.x, 6.x or 5.x is covered in
+Upgrading from an earlier 9.x, or from 8.x, 7.x, 6.x or 5.x, is covered in
 **[Upgrading](https://chaunceygardiner.github.io/weewx-celestial/upgrading.html)**.
 
 ## Where to find things
