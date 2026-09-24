@@ -297,7 +297,7 @@ directory — declares them:
 | Key | What it does |
 |---|---|
 | `prefix` | The set's file names: `<prefix>.txt`, `<prefix>-1..9.txt`, `<prefix>-pass.txt`.  Default `dome-svg`, whose pass fragment keeps the name `pass-chart.txt`.  One set per prefix, whatever their directories — a page that names no set finds its set by prefix.  Two sets are refused separately for *writing* the same file, which follows `kind`: a dome-only set never claims the pass fragment its prefix spells, nor a pass-only set the ten dome slots |
-| `label_scale` | Passed to weewx-skyfield's chart labels; default 1.0 |
+| `label_scale` | Passed to weewx-skyfield's chart labels; default 1.2 (see [The two drawings](#the-two-drawings)) |
 | `theme` | `dark`, `light` or `auto`, spelled exactly as the report option is; default the report's own.  A set on a plate of its own is drawn on that plate and keeps its own label colors — that is how a night dome sits inside a light page |
 | `directory` | Where under `HTML_ROOT` the set is written; default `HTML_ROOT` itself.  A plain relative path — no leading slash, nothing that could leave `HTML_ROOT` |
 | `kind` | Which fragments the set is for: `dome` (the ten backdrops), `pass` (the chart) or `both`, the default.  A skin with the dome on one page and the chart on another, at different label scales, wants a set for each — and without this each writes the other's files every cycle for a page that never asks.  A call for the panel a set does not write is **refused**, with the line below and the reason in the log, rather than pointed at a file nothing will ever write |
@@ -312,17 +312,112 @@ and file names in one:
     $celestial.pass_html($almanac, set='astro')
 ```
 
+### The two drawings
+
+Since 9.6 every dome and pass chart is drawn **twice** into the one
+fragment — once in weewx-skyfield's desk frame and once in its phone
+frame — and the stylesheet shows the one that fits.  You get this without
+asking for it, and the bundled page needs no setting for it.
+
+**The choice is made on the drawing's own width, not the window's.**  It
+is a `@container` query, which matters most to *you*: the width a chart
+renders at depends on your chrome, your columns and your breakpoints, and
+nothing in this extension can know any of them.  A window rule would be
+wrong in your skin by exactly as much as your layout differs from this
+one.
+
+**The width is derived per set, not fixed.**  A chart's smallest label is
+10 units times the set's `label_scale`, so the width at which it reaches
+11px moves with the scale: 935px at 0.8, 623px at the 1.2 default, 534px
+at 1.4.  Each fragment carries its own as `data-frame-at`, and
+`celestial.js` applies it.  The stylesheet's own `@container` rule states
+the default scale's width, which is what a page with no javascript keeps
+— correct for any set on the default, and the only number a stylesheet
+can state, since a container query's condition takes no variable.  So if
+you set a `label_scale`, you get the right switching width for free; you
+do not have to compute or maintain one.
+
+The phone drawing is a different drawing, not the desk one with larger
+words: 360 units across instead of 680, its own type sizes, and its
+content thinned to make room for them (stars to magnitude 4.0, a
+constellation named only where its figure is wide enough).  Every body,
+satellite, comet and radiant is drawn and named in both.  The Geocentric
+dial does the same thing in the browser, in this extension's own script.
+
+What that means for your markup, if you read a fragment or style one:
+
+```html
+<div class="domefrag" ... data-frames="both">
+  <div class="cel-frame" data-frame="wide">...</div>
+  <div class="cel-frame" data-frame="narrow">...</div>
+</div>
+```
+
+- The **box** is what is hidden, not the `<svg>`.  A pass chart is its
+  drawing *plus* the pass's dated head line, and hiding only the drawing
+  would leave that line on the page twice.
+- `data-frames="both"` appears only when the fragment really holds two
+  drawings.  If one frame fails to draw, the other is emitted bare, with
+  no boxes and no attribute, so it shows at every width — the switch can
+  never be the reason a panel is blank.
+- Anything of yours that reads a fragment and expects one `<svg>` finds
+  two.  Take the one inside the box you mean, or act on both.
+- You do **not** need to match a breakpoint: the panels measure
+  themselves.  If you want your chrome to change at the same moment the
+  drawings do, put your own `@container` query on the same wrapper
+  rather than guessing a viewport width.
+
+**A set's `narrow_label_scale` and `narrow_media` no longer reach a
+narrow screen.**  They add a second label layout inside the *desk*
+drawing, and where that drawing renders too narrow to be read it is not
+what shows.  They are still accepted and still do their work above that,
+so a set asking for larger labels in the band between a phone and a desk
+— say `"(max-width: 900px)"` — keeps working exactly as it did.  A set
+whose `narrow_media` is a phone breakpoint should drop both keys: a
+phone now gets a drawing made for it, which is what those keys were
+reaching for.
+
+**The dial's label placement measures your type, it does not assume
+it.**  The Geocentric dial places each name against the names already on
+it and drops one it cannot fit rather than stacking it.  The room it
+reserves is the browser's own measurement of the glyphs it drew — your
+face, at your size, in your language, including whatever the reader's
+device fell back to — taken afresh on every redraw.  So you may size
+`.bodylab` and friends however suits your page, and you may give them
+more than one size within a single frame: a media query of your own, a
+container that grows, a root font that scales with the viewport.  The
+placement follows without being told, and it is never working from a
+size it read earlier.  What it
+cannot do is make room that is not there: on a narrow dial carrying
+large type, expect names to be dropped, and expect *which* ones to vary
+with where the sky has put things.  A dropped name is still reachable —
+its mark keeps its tooltip.
+
+**A set's `label_scale` now defaults to 1.2**, not 1.0.  A chart is
+capped at 640px of glass and its smallest label is 10 units in a 680
+unit frame, which rendered at 9.4px — under any legibility standard, on
+every desktop.  If you set a scale of your own, check it the same way:
+your smallest label is `10 × scale` units, and it wants to reach 11px at
+the narrowest width you show the desk drawing at.
+
+### Two label layouts in one drawing
+
 A skin with two label scales for two screen sizes — a desktop column
-and a phone — does not need two sets or two pages.  Give the set a
+and a narrower one — does not need two sets or two pages.  Give the set a
 narrow layer:
 
 ```
 [CelestialFragments]
     [[stars]]
-        label_scale = 0.8
         narrow_label_scale = 2.2
-        narrow_media = "(max-width: 600px)"
+        narrow_media = "(max-width: 900px)"
 ```
+
+The set takes the default `label_scale`, so its frame threshold is 623px
+and a 900px query sits above it — which is what makes the layer reachable
+at all.  Declaring `label_scale = 0.8` here instead would move the
+threshold to 935px and the query would never show anything, because below
+935px this drawing is hidden and the phone one is shown in its place.
 
 ```
     $celestial.dome_html($almanac, set='stars')
@@ -337,7 +432,10 @@ first paint; nothing is fetched that a desktop does not fetch.  The
 scale reaches only the text: dots, markers and rings are drawn once.
 Hold the query in `skin.conf` to the breakpoint in your stylesheet with a
 test of your own; the browser cannot report a mistyped query, it simply
-never matches.  The keys arrived with weewx-skyfield 2.5; 9.4 requires 2.6.
+never matches.  The keys arrived with weewx-skyfield 2.5; 9.6 requires
+2.7.  Keep the query **above** your set's frame threshold: below it this
+drawing is hidden and its layers with it (see
+[The two drawings](#the-two-drawings)).
 
 A skin may still choose its set per page if it wants to, and `set=`
 takes a Cheetah variable — **unquoted**, since Cheetah does not
@@ -384,10 +482,10 @@ and the rest of the page and the rest of the live layer carry on.
 | Call | What it renders |
 |---|---|
 | `$celestial.countdown_html($almanac)` | The countdown row — the chips, first-painted and then counting on every loop packet |
-| `$celestial.geocentric_html($almanac)` | The Geocentric: the dial (the javascript builds it on the first packet) and the roster beside it |
-| `$celestial.dome_html($almanac, set='')` | The sky dome: the fragment set's current backdrop in its self-describing wrapper, its caption and its frozen-sky line |
+| `$celestial.geocentric_html($almanac, caption=True)` | The Geocentric: the dial (the javascript builds it on the first packet), its caption and the roster beside it |
+| `$celestial.dome_html($almanac, set='', caption=True)` | The sky dome: the fragment set's current backdrop in its self-describing wrapper, its caption and its frozen-sky line |
 | `$celestial.dome_roster_html($almanac, set='')` | The "next pass overhead" roster — every configured satellite's next pass of any kind |
-| `$celestial.pass_html($almanac, set='')` | The Next Visible Pass chart, hidden when no pass is in the window |
+| `$celestial.pass_html($almanac, set='', caption=True)` | The Next Visible Pass chart and its caption, hidden when no pass is in the window |
 | `$celestial.pass_roster_html($almanac, set='')` | The visible-pass roster beside it |
 | `$celestial.pass_panel_hidden($almanac, set='')` | True when the pass panel has nothing at all to show, so your own section chrome can hide with it; the javascript unhides `#pass-sec` by that id when a pass enters the window |
 | `$celestial.footer_html($almanac)` | The credit line, true for whichever almanac actually served the page |
@@ -397,6 +495,39 @@ and the rest of the page and the rest of the live layer carry on.
 The rosters are separate calls so you can place them where you like; the
 bundled page puts each beside its chart in a two-column grid, which is
 its own chrome, not the panel's.
+
+The captions can move too.  `caption=False` on the Geocentric, the dome
+or the pass chart leaves out the paragraph explaining how to read that
+chart, and nothing else.  `$celestial.geocentric_caption($almanac)`,
+`$celestial.dome_caption($almanac, set='')` and
+`$celestial.pass_caption($almanac, set='')` return that paragraph's text
+on its own, translated exactly as the panel would show it, for you to
+place wherever your page keeps its explanations.  Give a caption the
+same `set` as its panel:
+
+```
+$celestial.dome_html($almanac, set='astro', caption=False)
+#set $why = $celestial.dome_caption($almanac, set='astro')
+#if $why
+<div class="my-popover">$why</div>
+#end if
+```
+
+A caption call returns an empty string exactly where its panel would
+carry no caption: when the almanac cannot draw the sky and the panel
+shows its install line instead, when the dome's drawing failed and the
+panel says so, or when the set is refused.  So an
+explanation never stands beside a chart that is not there.  The one
+state it cannot follow is the pass chart waiting for a pass: with no
+visible pass in the window the chart first-paints hidden, and the
+javascript unhides it when one arrives, long after the page was
+generated.  If your page shows the pass roster while the chart is
+hidden and your caption should hide with the chart, follow the `hidden`
+attribute of `#pass-wrap`, which the javascript keeps current.
+
+The text is ready to write into your markup as it stands: a translation
+may carry entities such as `&nbsp;` or markup of its own, so never escape
+it again.
 
 {: .note }
 One dome and one pass chart per page.  Both are addressed by id
@@ -634,7 +765,7 @@ surface is **additive only**: the DOM ids, the config keys, the fragment
 wrapper's data-attributes, the field group names, the
 `[CelestialFragments]` keys, the `celestial.css` token names and the
 public call signatures above never change meaning or disappear.  A panel
-may gain marks, keys and classes; `changes.txt` names each one.  9.3
+may gain marks, keys and classes; `changes.md` names each one.  9.3
 added two optional set keys, `narrow_label_scale` and `narrow_media`,
 and nothing on the page's own markup; the label layers inside a chart
 (`g.dome-labels`, `data-label-scale`, and `data-label-layers` and
@@ -676,20 +807,30 @@ as their release notes ask, and it is not your problem.
 - **Your skin's own upgrade path.**  The copied assets are yours once
   copied, under whatever names you gave them: re-copy them from
   `skins/Celestial/` after upgrading this extension, exactly as you would
-  weewx-skyfield's `sky.js`.  The version-tag trick the bundled page uses
-  (`celestial.css?v=…`) is worth copying too — a browser holding a stale
-  script against a fresh config block is a confusing few minutes.
+  weewx-skyfield's `sky.js`.  **Version-tag the URLs** as the bundled
+  page does (`celestial.css?v=…`); since 9.6 this is not a nicety.
 
   Know what forgetting looks like, because it does not look like an
-  error: the panels render (the markup is new) but arrive unstyled, and
-  the dial never draws, because an old stylesheet and an old script are
-  looking for class names the new markup no longer uses.  Nothing fails
-  and nothing is logged.  The script does announce a version-mismatched
-  config in the browser console, which catches its half on a real
-  upgrade; the stylesheet carries no version and cannot.  If a page
-  looks like plain text with a blank dial after you upgrade, this is
-  why.  Note also that `copy_once` will not overwrite a file that is
-  already there — copying is yours to do.
+  error.  A browser holding 9.5.1's stylesheet against 9.6's markup
+  shows **both drawings at once**, stacked — the desk chart and the
+  phone chart, and the pass chart's dated head line twice — because the
+  rules that hide one of them are in the new stylesheet and the old one
+  has never heard of `.cel-frame`.  An old *script* against new markup
+  is quieter and just as wrong: nothing switches frames, and the live
+  layer misplaces every mark on a narrow chart, because it reads the
+  wide frame's geometry instead of the `data-dome-cx/-cy/-r` the drawing
+  declares.  Nothing fails and nothing is logged.  The script does
+  announce a version-mismatched config in the browser console, which
+  catches its half on a real upgrade; the stylesheet carries no version
+  and cannot.
+
+  What `copy_once` does and does not do is worth being exact about,
+  because it is easy to get backwards.  It copies on the FIRST report
+  cycle of each weewxd run, and it *overwrites* — so restarting weewxd
+  refreshes your HTML root from your skin directory.  What it cannot do
+  is refresh your SKIN from this extension: re-copying the assets out of
+  `skins/Celestial/` after an upgrade is yours to do, and until you do
+  it a restart faithfully re-copies the old ones.
 
 ## If you are building a live page of your own instead
 

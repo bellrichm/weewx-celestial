@@ -1,16 +1,167 @@
-weewx-celestial change history
-------------------------------
+# weewx-celestial change history
 
-9.5.1 2026/09/16
-----------------
-- ?pageUpdate=<page_update_pwd> keeps the page from expiring even when
+## 9.7 2026/09/21
+- New, for a skin of your own that embeds these panels:
+  geocentric_html, dome_html and pass_html take caption=False, which
+  leaves out the explanatory caption under the chart and nothing else,
+  and geocentric_caption($almanac), dome_caption($almanac, set='') and
+  pass_caption($almanac, set='') return that caption's text on its own,
+  translated exactly as the panel would show it -- and empty exactly
+  where the panel would carry no caption, so an explanation never stands
+  beside a chart that is not there.  A page that puts its
+  explanations somewhere of its own choosing -- beside the heading, in a
+  popover -- can now move them without parsing the panel's markup.  The
+  default is unchanged, so the bundled Celestial page and every existing
+  skin render exactly as before.
+- celestial.js changes only its version string.  A skin holding its own
+  copy of 9.6.1's script works unchanged; the browser console notes the
+  version difference, and re-copying the file silences it.
+
+## 9.6.1 2026/09/20
+- ACTION REQUIRED, for a skin of your own that embeds these panels: after
+  upgrading, RE-COPY celestial.js from skins/Celestial/ into your skin
+  and restart WeeWX.  Your skin keeps its own copy of that file, and
+  upgrading this extension does not replace it, so nothing below reaches
+  your pages until you do.  The bundled Celestial report needs no such
+  step.
+- Fixed: on a skin that gives the Geocentric dial's labels a second size
+  inside one frame -- a media query of its own, a container growing, a
+  root font that scales with the viewport -- the dial wrote names over
+  each other.  The room reserved for a name was built from a type size
+  read once and remembered on the label, and nothing but a change of
+  frame ever cleared it, so a size that changed without one was never
+  noticed.  The dial now MEASURES each name as the browser actually drew
+  it, and there is no remembered size left to go stale.
+- The same measurement replaces the character count and the glyph ratio
+  the reserved room was also built from.  Neither could tell a narrow
+  letter from a wide one, so two names of the same length were given the
+  same room however different the letters in them; measured, two such
+  names on this page differ in width by two and a half times.
+- Fixed: the room reserved for the cardinal points and the Earth label
+  was worked out once when the dial was built and kept for the life of
+  the drawing, so a stylesheet that changed their size could leave a
+  body's name placed over the N.
+- Fixed: a name the previous pass dropped is hidden, and a hidden
+  element has no box to measure, so it is shown before it is measured.
+- Fixed: resizing a window could leave the dial's names where the OLD
+  type size had put them, so they could be written over each other for
+  about a second until the next redraw.  It needed a resize that changed
+  what your stylesheet resolves for a label without changing which of
+  the two drawings is shown -- a media or container query of your own
+  between the two -- and the dial then re-measured only on its next
+  redraw.  It re-places as soon as the resize happens now.
+- Fixed: a skin that sets these labels in a webfont measured them in
+  whatever face the browser fell back to if the real one had not arrived
+  yet, so the first drawing could overlap until the next one a second
+  later.  The dial now takes the boxes again when the document reports
+  its faces settled.
+- The bundled Celestial page DOES change, slightly: because the room
+  reserved for each name is now the name's real width, the dial keeps
+  some names it used to give up and gives up some it used to keep.  On
+  the sample page a desk-width dial gains a body name and a phone-width
+  dial drops one distance-ring number -- the ring numbers are placed
+  last, and yield to a body's name by design.  Nothing else about the
+  page changes, and nothing in weewx.conf or the skin has to change.
+
+## 9.6 2026/09/20
+- ACTION REQUIRED: this release requires weewx-skyfield 2.7 or later if
+  you run weewx-skyfield at all.  Upgrade weewx-skyfield FIRST, then
+  this; the installer refuses an older one and says so.  The sky dome
+  and the Next Visible Pass chart are now drawn twice -- once for a desk
+  and once for a phone -- and the phone drawing is 2.7's.
+- ACTION REQUIRED, only for a skin that embeds these panels and declares
+  a [CelestialFragments] set whose narrow_label_scale is 1.2 and which
+  does NOT declare a label_scale of its own: that set is now REFUSED,
+  and a refused section writes no fragments at all.  A set's label_scale
+  defaults to 1.2 as of this release (it was 1.0), so a narrow layer of
+  1.2 that used to be a second scale is now the same scale, and the two
+  layers would collide.  Give the set a label_scale, give the layer a
+  different scale, or -- since a narrow layer no longer reaches a phone,
+  below -- drop the layer.  The refusal names the value and says where
+  the base came from.
+- ACTION REQUIRED, only for a skin that embeds these panels and declares
+  its own [CelestialFragments] sets: a set's narrow_label_scale and
+  narrow_media no longer reach a reader on a narrow screen.  Those keys
+  add a second label layout inside the DESK drawing, and where that
+  drawing renders too narrow to be read it is no longer what shows.
+  They are still accepted and still work above that, so a set asking for
+  larger labels in the band between a phone and a desk keeps working; a
+  set whose narrow_media is a phone breakpoint should simply drop both
+  keys, since a phone now gets a drawing made for it.  The bundled
+  Celestial page declares no such set and needs no change.
+- The sky dome, the Next Visible Pass chart and the Geocentric dial are
+  drawn for a phone wherever they render narrow, and for a desk
+  otherwise.  It is a second DRAWING, not the same one with bigger
+  words: the phone frame is 360 units across -- about one unit to the
+  pixel -- with type sized for it, fewer names on the dome (stars to
+  magnitude 4.0, and a constellation named only where its figure has
+  room), and the dial's distance rings labeled every other decade.
+  Enlarging labels inside a drawing laid out for a desk makes them
+  collide and clip, which is why the frame changes instead.  Every body,
+  satellite, comet and radiant is still drawn and still named.
+- WHICH frame is asked of the DRAWING's own width, not the window's, and
+  the width it changes at is derived rather than chosen -- and derived
+  PER SET, since a set's label_scale moves it: a chart's smallest label
+  is 10 units times that scale, so it reaches 11px at 935px of glass on
+  a set scaled 0.8, at 623px on the 1.2 default and at 534px on one
+  scaled 1.4.  Each fragment carries its own width and the page honors
+  it, so no set can quietly show a drawing its labels have stopped
+  reading on.  The two questions -- how wide the drawing is, and how
+  wide the window is -- are not the same one.  On the previous release a 1000px
+  window drew the dome 640px and a 1001px window drew it 459px, because
+  at 1001 the panel becomes a grid and the chart shares the row with the
+  roster; and in a skin of your own the width depends on that skin's
+  chrome, which this one cannot know.
+- The Geocentric dial no longer writes one label over another.  Each
+  name is now placed against the names already on the dial, trying a
+  few positions before giving up, and one that cannot be fitted is
+  dropped rather than stacked -- its mark keeps its tooltip, so hover
+  and tap still name it.  Cardinals and the Earth label are placed
+  first, then the bodies from Earth outward, then the comets, then the
+  ring numbers, so what yields under pressure is a distance figure
+  rather than a body's name.  This fixes the desk page as well, where
+  Jupiter and Halley have been overlapping.
+- Desk labels are larger.  A chart's smallest label had been rendering
+  at 9.4px on every desktop, and the dial's at 9.7px, because a drawing
+  capped at 640px carries 10-unit type at less than 10px.  A set's
+  default label_scale is 1.2 now, and the dial's own desk type is 12
+  units, so both clear 11px everywhere they are shown.
+- Both drawings ride in the same fragment, so a screen that changes
+  width switches them with nothing fetched.  The live layer keeps both
+  true, so the drawing that appears is already in the right place.
+- The panels no longer squeeze the chart beside their roster on a
+  middling window: the two-column layout now waits until there is room
+  for both, and a phone spends less of its width on this page's own
+  padding.
+- The desk drawing is otherwise what it has always been, geometry for
+  geometry.  Two things in it do change: the label SIZE, since a set's
+  default label_scale moves from 1.0 to 1.2 (above), and the two ring
+  numbers (below).  A fragment diffed across the upgrade therefore
+  differs in every label's inline font-size as well.
+- The sky dome's and the Next Visible Pass chart's two altitude ring
+  numbers were crossed and are now right: the label reading 30 sat on
+  the 60 ring and the one reading 60 on the 30 ring.  On these charts
+  the zenith is the center and the horizon is the rim, so altitude
+  counts down as the radius counts up, and the first ring out from the
+  middle is 60.  The fix is weewx-skyfield 2.7's and arrives with it;
+  it is the only thing that moves in the desk drawing.
+- No text in the panels renders under 11px any more, even inside a host
+  skin whose root font shrinks with the viewport.  The floor is one-way:
+  a host that scales type UP still gets what it asked for.
+- For a skin embedding the panels: a fragment carrying both drawings
+  wraps each in `<div class="cel-frame" data-frame="wide|narrow">` and
+  says data-frames="both" on the fragment wrapper.  A fragment carrying
+  one drawing is unchanged.  Anything reading a fragment and expecting
+  one `<svg>` now finds two.
+
+## 9.5.1 2026/09/16
+- `?pageUpdate=<page_update_pwd>` keeps the page from expiring even when
   the URL carries the password percent-encoded, as a browser or a link
   rewriter may leave it.  The page compared the password as the URL
   carried it, so an encoded one never matched and the page expired
   anyway.
 
-9.5 2026/09/15
---------------
+## 9.5 2026/09/15
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6.1 first.
   The sky charts' dates and clock times read [Texts] keys 2.6.1 renamed,
   and beside an older weewx-skyfield a translated page's chart dates
@@ -55,8 +206,7 @@ weewx-celestial change history
   frozen-sky line through the browser's locale rules, so an English pass
   time changed from "15:53" to "03:53 PM" on the first loop packet.
 
-9.4.1 2026/09/15
-----------------
+## 9.4.1 2026/09/15
 - A satellite's name on the live sky dome is the same size as the names
   around it.  The page's live marker drew the name with no size, so it
   took the browser's 16 px default: about twice the size of the other
@@ -65,8 +215,7 @@ weewx-celestial change history
   dome carries, at that layer's body-label size, so the name the screen
   shows matches its neighbors and switches with them.
 
-9.4 2026/09/14
---------------
+## 9.4 2026/09/14
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.6 first.
   9.4 is pinned to 2.6, whose palette the panels copy.  The installer
   REFUSES to install beside an older weewx-skyfield, naming the version
@@ -120,8 +269,7 @@ weewx-celestial change history
   back.  The config block gains the key `countdown`, True by default; a
   value that is not a boolean is logged and leaves the chips live.
 
-9.3 2026/09/12
---------------
+## 9.3 2026/09/12
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.5 first.
   9.3 is pinned to 2.5, whose label layers draw the narrow label scale
   below.  The installer REFUSES to install beside an older
@@ -148,8 +296,7 @@ weewx-celestial change history
   figures and pass-arc times are drawn on top of the stars, where
   through 2.4 a star dot could print over a ring figure.
 
-9.2 2026/09/10
---------------
+## 9.2 2026/09/10
 - ACTION REQUIRED: the time_zone option is gone.  Every time on the page
   is the STATION's own zone, detected at report time from the machine
   that generates the report, and there is nothing to set.  weectl does
@@ -158,8 +305,7 @@ weewx-celestial change history
   logs a warning naming it, on every report cycle, until you delete it.
   If yours said browser, the page no longer follows the viewer's zone.
 
-9.1 2026/09/08
---------------
+## 9.1 2026/09/08
 - ACTION REQUIRED if you run weewx-skyfield: upgrade it to 2.4.  9.1 is
   pinned to 2.4 rather than kept working across a range of it.  The
   light plate's brass is 2.4's value, and the Next Visible Pass chart's
@@ -184,7 +330,7 @@ weewx-celestial change history
   so every packet on every station carries three fields fewer -- the
   skin's own skin.conf is replaced on upgrade, so nothing need be typed
   anywhere.  Pluto stays a reserved tag: every almanac still serves
-  almanac.pluto.*, so a satellite or comet may still not be named after
+  `almanac.pluto.*`, so a satellite or comet may still not be named after
   it, and a page of your own may still read those fields by declaring
   them itself.  A skin that pasted this page's field declaration into
   its own skin.conf keeps a dead pluto group until it deletes the line;
@@ -241,8 +387,7 @@ weewx-celestial change history
   its own colors, which is now pinned by a test rather than left to the
   old markup's accident.
 
-9.0.1 2026/08/31
-----------------
+## 9.0.1 2026/08/31
 - FIXED: the LIVE badge's age is read from the serving machine's own
   clock -- the Date header of the very response that carried the loop
   record -- instead of being worked out from the page alone.  The two
@@ -276,8 +421,7 @@ weewx-celestial change history
   it.  Nothing else on the page changes: same markup, same fields, same
   configuration.
 
-9.0 2026/08/30
---------------
+## 9.0 2026/08/30
 - ACTION ON UPGRADE: the sky dome's ten fragment templates
   (dome-svg.txt.tmpl and dome-svg-1..9.txt.tmpl), their shared
   dome-svg-frag.inc and pass-chart.txt.tmpl -- twelve files -- and the
@@ -293,10 +437,12 @@ weewx-celestial change history
   celestial` removes only the files it installed and leaves a directory
   it did not empty in place, so skins/Celestial would outlive the
   uninstall holding nothing but them.  Delete them once:
-      rm /home/weewx/skins/Celestial/dome-svg*.txt.tmpl \
-         /home/weewx/skins/Celestial/dome-svg-frag.inc \
-         /home/weewx/skins/Celestial/pass-chart.txt.tmpl \
-         /home/weewx/skins/Celestial/realtime_updater.inc
+  ```
+  rm /home/weewx/skins/Celestial/dome-svg*.txt.tmpl \
+     /home/weewx/skins/Celestial/dome-svg-frag.inc \
+     /home/weewx/skins/Celestial/pass-chart.txt.tmpl \
+     /home/weewx/skins/Celestial/realtime_updater.inc
+  ```
   (your SKIN_ROOT may differ).  An edit you made to one of them no
   longer applies.
 - The page's panels start becoming something another skin can drop in,
@@ -441,7 +587,7 @@ weewx-celestial change history
   their directories.  A fragment fetch that comes back with an HTTP
   error or with something that is not a fragment earns one line in the
   browser console naming the URL asked.  Every panel's
-  root element now carries data-celestial="<version>", the marker the
+  root element now carries `data-celestial="<version>"`, the marker the
   consumer contract promises.  A minimal consumer skin lives under
   tests/fixtures -- its page in a subdirectory, using nothing but the
   public surface -- and is rendered through WeeWX's own report engine
@@ -533,7 +679,7 @@ weewx-celestial change history
   is a placeholder you are meant to replace.
 - Documentation: the Configuration page prints the stanza as it is now
   written and says what the commented-out form means.  The password
-  comment named the wrong URL parameter -- it is ?pageUpdate=<password>.
+  comment named the wrong URL parameter -- it is `?pageUpdate=<password>`.
 - Every class the panels render is prefixed cel- (cel-row, cel-roster,
   cel-caption), so embedding them in another skin cannot collide with
   that skin's own class names.  A real host skin names .row, .roster and
@@ -646,8 +792,7 @@ weewx-celestial change history
   where it is installed but does not require.
 
 
-8.5 2026/08/26
---------------
+## 8.5 2026/08/26
 - ACTION REQUIRED: weewx-loopdata 7.0 or later.  Upgrade it BEFORE
   installing this release: the installer refuses to run beside an
   older weewx-loopdata, or none, and says so.  The page's live values
@@ -714,8 +859,7 @@ weewx-celestial change history
 - Drop-in over 8.4 once weewx-loopdata is 7.0: no configuration
   change of yours; the installer prints what it declared.
 
-8.4 2026/08/24
---------------
+## 8.4 2026/08/24
 - The installer works out where weewx-loopdata actually writes and
   points the page at it.  The page fetches loop_data_file, a URL
   relative to its OWN report's directory; weewx-loopdata writes
@@ -767,8 +911,7 @@ weewx-celestial change history
   same churn in the hours before one rises).
 - Drop-in over 8.3.5; no configuration change.
 
-8.3.5 (2026/08/17)
-------------------
+## 8.3.5 (2026/08/17)
 - The page's clock is the loop packet's own timestamp -- and, before the
   first packet, the instant the page was generated for.  8.3.4 carried
   the station's clock forward between packets on the browser's
@@ -808,8 +951,7 @@ weewx-celestial change history
   continuously.
 - Drop-in over 8.3.4; no configuration change.
 
-8.3.4 (2026/08/16)
-------------------
+## 8.3.4 (2026/08/16)
 - The live page now reads one clock, and it is the station's.  Every
   instant the page reasons about -- a satellite pass's rise and set, a
   countdown chip's target, the roster's "overhead now", the header
@@ -843,8 +985,7 @@ weewx-celestial change history
   for them to guard against.  What replaces them is one clock and a
   stopwatch.  No configuration change, no new fields.
 
-8.3.3 (2026/08/15)
-------------------
+## 8.3.3 (2026/08/15)
 - The Next Visible Pass chart's sweeping dot leaves the chart when the
   pass ends, instead of jumping backwards up the arc it has just ridden.
   At the set instant the dot was put back where the almanac drew it --
@@ -868,8 +1009,7 @@ weewx-celestial change history
   left standing).  Found in a live capture of NOAA-21's
   2026-08-15 pass, at the 02:58:35 set instant exactly.
 
-8.3.2 (2026/08/15)
-------------------
+## 8.3.2 (2026/08/15)
 - ACTION: the sky dome's star field advances again on stations whose
   units are not the defaults.  The dome fragments are spaced across the
   archive interval, which the templates read as $current.interval.raw --
@@ -983,8 +1123,7 @@ weewx-celestial change history
   the same machinery ported into another skin -- and by Jacques
   Terrettaz, who found the one that mattered by reading the templates.
 
-8.3.1 (2026/08/15)
-------------------
+## 8.3.1 (2026/08/15)
 - A sky dome whose backdrop stops arriving now freezes and says so.  The
   star field and constellation figures are refetched once a minute; when
   those fetches stop landing the page used to keep the last good sky and
@@ -1031,8 +1170,7 @@ weewx-celestial change history
   beside them), complete in all nine languages.
 - Reported by Jacques Terrettaz (issue #4).
 
-8.3 (2026/08/14)
-----------------
+## 8.3 (2026/08/14)
 - The page comes in light as well as dark.  A new report option --
   theme = dark | light | auto, beside lang in [[CelestialReport]] and
   NOT inside [[[Extras]]] -- puts the page on a paper-atlas plate, or
@@ -1072,8 +1210,7 @@ weewx-celestial change history
   in the log, naming the three valid values, so the mistake is visible
   instead of silently dark for ever.
 
-8.2 (2026/08/14)
-----------------
+## 8.2 (2026/08/14)
 - The Geocentric dial gets its grid back.  Its rings, ticks and rim were
   drawn in the color of a section border, on the panel surface that
   border surrounds: 1.2 to 1.4 to 1 against their own background, which
@@ -1110,8 +1247,7 @@ weewx-celestial change history
   still running 2.1 the dome keeps the darker Mars until it is upgraded.
   The constellation figures stay recessive on purpose.
 
-8.1.2 (2026/08/13)
-------------------
+## 8.1.2 (2026/08/13)
 - The page generates again on WeeWX 5.2, this extension's stated
   minimum.  Since 7.2 it has taken its body names from the report's
   [Almanac] section, which WeeWX only began handing to the almanac in
@@ -1121,8 +1257,7 @@ weewx-celestial change history
   reach, and nothing else on the page changes.  Translating body names
   still needs WeeWX 5.3 or later; the minimum stays 5.2.
 
-8.1.1 (2026/08/12)
-------------------
+## 8.1.1 (2026/08/12)
 - A satellite pass row's whole-day countdown now counts CALENDAR days,
   so it can no longer contradict the date standing on its own line.  A
   pass 26 hours out, tomorrow morning, read "Jun 21 03:59 · in 2 days":
@@ -1217,8 +1352,7 @@ weewx-celestial change history
   manual and the project, and the rule under them -- which is the one
   kind of drift no content audit can see.
 
-8.1 2026/08/10
------------------
+## 8.1 2026/08/10
 - The installer now updates the [LoopData] [[Include]] fields line
   itself: weectl extension install appends the entries the page reads
   that are missing -- APPEND-ONLY, each one printed, existing entries
@@ -1246,7 +1380,7 @@ weewx-celestial change history
   the upgrade is otherwise drop-in.
 - The Next Visible Pass chart's sweeping dot now flips between the solid
   sunlit dot and the hollow in-shadow ring live, from the same
-  almanac.<satellite>.sunlit flag that drives the dome's marker -- the
+  `almanac.<satellite>.sunlit` flag that drives the dome's marker -- the
   two panels stay in agreement when the satellite crosses the shadow
   line mid-pass.  8.0 kept the culmination's state for the whole ride
   (NOAA-21 culminating in shadow wore the ring from rise while the dome
@@ -1305,7 +1439,7 @@ weewx-celestial change history
   (the [Skyfield] [[Comets]] entry, the six fields-line entries, the
   [StdReport] [[Defaults]] [[[Almanac]]] display name).  MPC
   designations validate (1P, 220P, "C/2023 A3" -- quote one with a
-  space); satellites and comets share the almanac.<tag> namespace, so
+  space); satellites and comets share the `almanac.<tag>` namespace, so
   each family refuses the other's tags.  The migrator and the
   install-time fields hint follow [Skyfield] [[Comets]] exactly as
   they follow [[Satellites]]: a present-but-empty section is
@@ -1322,7 +1456,7 @@ weewx-celestial change history
   the two sentences ran together with no separator (the joining "·" is
   template markup, so no translation changes).
 - The tailored --migrate-loopdata-fields commands the installer prints
-  now carry a PYTHONPATH=<weewx's location> prefix, so they paste and
+  now carry a `PYTHONPATH=<weewx's location>` prefix, so they paste and
   run on every install layout.  On a Debian/Red Hat package install
   WeeWX's own code lives in /usr/share/weewx, on the path only inside
   weectl, so the bare command 7.8-8.0 printed died with
@@ -1332,10 +1466,9 @@ weewx-celestial change history
   beside the venv commands for the migrator and the
   satellite/comet utilities.
 
-8.0 2026/08/08
------------------
+## 8.0 2026/08/08
 - ACTION (only to light up the satellite layer): append the
-  almanac.iss.* and almanac.tiangong.* entries to the [LoopData]
+  `almanac.iss.*` and `almanac.tiangong.*` entries to the [LoopData]
   [[Include]] fields line (the README has the full line;
   --migrate-loopdata-fields appends them for you, following your
   [Skyfield] [[Satellites]] so a customized set gets its own tags'
@@ -1443,7 +1576,7 @@ weewx-celestial change history
   date's strftime format is a translatable [Texts] key ('%b %-d'),
   added to all nine languages verbatim from weewx-skyfield's.
 - Tooltips work on touch screens.  Every mark on the dome and the pass
-  chart carries a native SVG <title> tooltip, and browsers show those
+  chart carries a native SVG `<title>` tooltip, and browsers show those
   only on hover -- on an iPad they were simply dead.  The skin now
   ships weewx-skyfield 2.0's sky.js (copied verbatim, that repo the
   source of truth): a tap on or near a mark shows the same text as a
@@ -1476,7 +1609,7 @@ weewx-celestial change history
   installer default (iss, tiangong) warns that the next weewx-skyfield
   upgrade re-adds its [[Satellites]] entry (weectl's conditional
   merge; re-run the removal afterwards), and removal never deletes the
-  cached wxskyfield_sat_<norad>.tle element file.
+  cached `wxskyfield_sat_<norad>.tle` element file.
 - Three new translations, matching weewx-skyfield 2.0's: lang/it.conf
   (Italian), lang/no.conf (Norwegian Bokmål -- the file code is no,
   WeeWX's own code for Norwegian) and lang/sv.conf (Swedish), each
@@ -1490,7 +1623,7 @@ weewx-celestial change history
   shipped languages, the shared vocabulary mined verbatim from
   weewx-skyfield's lang files, and the [Almanac] sections now carry the
   well-known satellite display names (iss = ISS, tiangong = Tiangong,
-  hst = HST) so almanac.<sat>.label never falls back to title-case;
+  hst = HST) so `almanac.<sat>.label` never falls back to title-case;
   only the dome panel's eyebrow, its install hint and the any-pass
   roster's four strings (its heading, its no-pass row, "visible",
   "not visible") are celestial's own wording.
@@ -1502,8 +1635,7 @@ weewx-celestial change history
   hours) used to overflow the delay, which can make the page expire
   early -- even immediately -- instead of effectively never.
 
-7.8 2026/08/02
---------------
+## 7.8 2026/08/02
 - A complete Danish translation ships with the sample skin, contributed
   by native speaker Gert Andersen: lang/da.conf, its
   shared vocabulary -- body names, moon phases, compass points and all
@@ -1511,8 +1643,7 @@ weewx-celestial change history
   pins this, as for the other languages).  Select it with lang = da in
   the report.
 
-7.7 2026/07/31
---------------
+## 7.7 2026/07/31
 - A complete Spanish translation ships with the sample skin (Beta,
   awaiting native-speaker review -- corrections welcome): lang/es.conf,
   its shared vocabulary -- body names, moon phases, compass points and
@@ -1523,8 +1654,7 @@ weewx-celestial change history
   it was waiting for is complete (2026/07/30, with weewx-skyfield 1.15)
   and confirmed the translation as shipped.
 
-7.6 2026/07/30
---------------
+## 7.6 2026/07/30
 - The sample page now reads the next full/new moon instants through
   pinned-unit spellings (almanac.next_full_moon.unix_epoch.raw,
   almanac.next_new_moon.unix_epoch.raw), completing 7.5's pinning: a
@@ -1537,8 +1667,7 @@ weewx-celestial change history
   old entries in place.  Required now only if the target report
   overrides group_time.
 
-7.5 2026/07/30
---------------
+## 7.5 2026/07/30
 - A complete Dutch translation ships with the sample skin (Beta,
   awaiting native-speaker review -- corrections welcome): lang/nl.conf,
   its shared vocabulary -- body names, moon phases, compass points and
@@ -1557,16 +1686,14 @@ weewx-celestial change history
   need not re-run, but pages served by a unit-overriding target report
   should adopt the pinned spellings.
 
-7.4 2026/07/29
---------------
+## 7.4 2026/07/29
 - A complete French translation ships with the sample skin (Beta,
   awaiting native-speaker review -- corrections welcome): lang/fr.conf,
   its shared vocabulary -- body names, moon phases, compass points and
   all 88 constellations -- in step with weewx-skyfield's fr.conf (a test
   pins this, as for the German).  Select it with lang = fr in the report.
 
-7.3 2026/07/28
---------------
+## 7.3 2026/07/28
 - FIX: 7.2's page failed to generate under weewxd -- every cycle logged
   "cannot find 'Labels'" and the page went stale at whatever 7.1 had
   last written.  The header's hemisphere letters were read from a
@@ -1578,8 +1705,7 @@ weewx-celestial change history
   German letters are unchanged.  Install right over 7.2 and restart
   weewx; no configuration changes.
 
-7.2 2026/07/28
---------------
+## 7.2 2026/07/28
 The page is now translatable through WeeWX's own mechanisms (lang files,
 [Texts]/$gettext, the [Almanac] section), and German ships with the skin.
 No action required when upgrading: an untranslated report renders exactly
@@ -1594,20 +1720,20 @@ set is unchanged.
   report's section of weewx.conf (or [StdReport] [[Defaults]] to switch
   every German-shipping skin at once).
 - The live javascript is translated too: body names (from the report's
-  [Almanac] section, the same source as $almanac.<body>.label), compass
+  [Almanac] section, the same source as `$almanac.<body>.label`), compass
   cardinals (from the report formatter's ordinates) and every composed
   string (badge states, "receding"/"approaching", altitude and au cells,
   Proxima's light-year label) are resolved at report-generation time and
   fed to the script json-escaped, so the dial, roster and badge stay in
   the report's language between loop refreshes.
 - The clock and last-update stamp now format per the report's lang
-  (previously hardcoded en-US), and <html lang> reports it.
+  (previously hardcoded en-US), and `<html lang>` reports it.
 - The roster's body names now come from the almanac texts (capitalized --
   "Moon" where 7.1 showed "moon"; German nouns need the capital and the
   small-caps styling is unchanged).
 - de.conf ships [Almanac] [[Constellations]] (all 88, keyed by IAU
   abbreviation) so constellation loopdata fields
-  (almanac.<body>.constellation.label) and report tags arrive in German
+  (`almanac.<body>.constellation.label`) and report tags arrive in German
   when this report is the loopdata target, even though the page itself
   does not currently render constellations.
 - New user manual at https://chaunceygardiner.github.io/weewx-celestial/
@@ -1615,8 +1741,7 @@ set is unchanged.
   building the Geocentric into your own skin, and translating.  The
   README and the manual link to each other.
 
-7.1 2026/07/24
---------------
+## 7.1 2026/07/24
 A failed loop-data fetch now says so on the page.  When the poll for
 loop_data_file comes back as anything but the json -- the classic being the
 web server's 404 page because weewx-loopdata writes outside HTML_ROOT (say
@@ -1628,8 +1753,7 @@ network-level failure or timeout shows OFFLINE (previously a blank badge).
 A later successful poll rewrites the badge to LIVE as always.  New
 headless-Chromium test covers the 404 case.
 
-7.0 2026/07/23
---------------
+## 7.0 2026/07/23
 ACTION REQUIRED when upgrading: (1) `weectl extension uninstall celestial`
 before installing 7.0, as always.  (2) If `user.celestial.Celestial` still
 appears under data_services in [Engine] [[Services]] (a 2.x leftover that
@@ -1668,16 +1792,14 @@ cached copy (which would bury the dial under unstyled ring discs).
   the migrator appends the new set, including the two new Proxima
   position fields.  --in-place backups are named .bak-celestial-7.0.
 
-6.0.1 2026/07/23
-----------------
-- Sample skin: the Celestial page's card titles (<p class="eyebrow">) are
-  now real <h2> headings, satisfying the current Nu Html Checker's rule
-  that every <section> carry a heading (h1 -> h2 cards, no level skips).
+## 6.0.1 2026/07/23
+- Sample skin: the Celestial page's card titles (`<p class="eyebrow">`) are
+  now real `<h2>` headings, satisfying the current Nu Html Checker's rule
+  that every `<section>` carry a heading (h1 -> h2 cards, no level skips).
   The .eyebrow rule gains font-weight:400 so the headings keep the exact
   non-bold look; no visual change.
 
-6.0 2026/07/19
---------------
+## 6.0 2026/07/19
 ACTION REQUIRED when upgrading: this release removes the loop-field
 service.  Run `weectl extension uninstall celestial` BEFORE installing 6.0
 -- `weectl extension install` over an old version only overlays files and
@@ -1686,7 +1808,7 @@ never reverses the old registrations, so installing over the top leaves
 ephemeris/star files; the uninstall, done first, removes both.  (Installing
 over the top is survivable: 6.0 ships a stub Celestial service that logs a
 warning and exits, so weewxd still starts -- remove the data_services
-entry and the two celestial_* files by hand.)  Requires weewx-loopdata
+entry and the two `celestial_*` files by hand.)  Requires weewx-loopdata
 5.0+ (and weewx-skyfield, recommended).  Then run
 `python -m user.celestial --migrate-loopdata-fields` to rewrite the
 [LoopData] [[Include]] fields line (celestial `current.*` entries become
@@ -1710,8 +1832,7 @@ upgrade instructions.
   appends the 6.0 sample-report field set; --in-place backups are named
   .bak-celestial-6.0.  The --test option is gone with the engine.
 
-5.3 2026/07/18
---------------
+## 5.3 2026/07/18
 - The sample report picks up the two almanac tag families weewx-skyfield
   1.9 added, everywhere the page renders its own presentation: the
   countdown row gains a next-eclipse chip (the nearest eclipse visible
@@ -1724,7 +1845,8 @@ upgrade instructions.
   cell is omitted entirely with an older weewx-skyfield (or none at all);
   the rest of the page is unchanged.  The seven embedded sky-chart panels
   are unaffected.  No [LoopData] fields changes; nothing to migrate.
---------------
+
+## 5.2 2026/07/12
 - weewx can now shut down while celestial is computing.  WeeWX stops by
   raising an exception from its TERM signal handler, from inside whatever
   code is running when the signal lands; when that was celestial's
@@ -1735,8 +1857,7 @@ upgrade instructions.
   error handler on that path now hands the shutdown exception back to
   WeeWX.
 
-5.1 2026/07/11
---------------
+## 5.1 2026/07/11
 - The sample report gains the three sky-chart panels weewx-skyfield 1.7
   added: the sun's path today (its altitude-and-azimuth arc with a dot
   every hour, the moon's path dashed alongside), the solar year (sunrise,
@@ -1759,8 +1880,7 @@ upgrade instructions.
   paloaltoweather.com page gallery -- with fresh captures -- to a "See it
   in action" section at the end.
 
-5.0 2026/07/09
---------------
+## 5.0 2026/07/09
 - ACTION REQUIRED (WeeWX version): weewx-celestial now requires WeeWX 5.2
   or later; WeeWX 4 support is dropped (it was supported through 4.2).
   install.py refuses to install on an older WeeWX, and the service module
@@ -1786,8 +1906,7 @@ upgrade instructions.
   weewx-skyfield alongside this extension, and say exactly what the report
   lacks without it.
 
-4.2 2026/07/08
---------------
+## 4.2 2026/07/08
 - The engine now reads the DE421 ephemeris fully into memory instead of
   letting jplephem memory-map the file.  Rewriting the .bsp in place under
   a running weewxd -- exactly what "weectl extension install" over a live
@@ -1800,21 +1919,19 @@ upgrade instructions.
   celestial_stars.dat and the sample skin's footer now carry the required
   "Credit: ESA" acknowledgment.
 
-4.1 Release 2026/07/08
-----------------------
+## 4.1 Release 2026/07/08
 - The sample Celestial skin's body identity colors now match weewx-skyfield
   1.5's traditional astronomy scheme: yellow sun, silver moon, gray Mercury,
   pearly Venus (four CSS variables in celestial.css; Mars through Neptune
   were traditional already and are unchanged, and Pluto remains celestial's
   own).  Purely visual -- no configuration, tag or template change.
 
-4.0 Release 2026/07/05
-----------------------
+## 4.0 Release 2026/07/05
 - ACTION REQUIRED (report tags): the embedded Skyfield report almanac has
   been removed.  Report tags such as $almanac.sunrise are now served by
   whatever almanac WeeWX has installed.  Install the weewx-skyfield
   extension (https://github.com/chaunceygardiner/weewx-skyfield) to keep
-  Skyfield-quality tags, including named-star and hip_<n> tags such as
+  Skyfield-quality tags, including named-star and `hip_<n>` tags such as
   $almanac.rigel.rise and $almanac.hip_57939.mag.  The
   replace_builtin_almanac option is gone; a leftover setting in the
   [Celestial] section of weewx.conf is ignored harmlessly.
@@ -1824,8 +1941,10 @@ upgrade instructions.
   [LoopData] [[Include]] [[[fields]]] line in one step -- renames the
   deprecated celestial fields in place, drops resulting duplicates, and
   appends the new 4.0 fields, never touching non-celestial fields:
-      python -m user.celestial --migrate-loopdata-fields
-          --config /path/to/weewx.conf --output /path/to/weewx.conf.migrated
+  ```
+  python -m user.celestial --migrate-loopdata-fields
+      --config /path/to/weewx.conf --output /path/to/weewx.conf.migrated
+  ```
   Compare and move into place (or use --in-place, which makes a backup
   first, or --print-fields-value for manual pasting).  Custom skins that
   read the old names from loop-data.txt must still be updated by hand;
@@ -1871,8 +1990,7 @@ upgrade instructions.
   extended capabilities is available (weewx-skyfield or PyEphem), and
   javascript fills and updates every cell live from loop data either way.
 
-3.1 Release 2026/07/05
-----------------------
+## 3.1 Release 2026/07/05
 - Require Skyfield 1.47 or later (the first release with
   find_risings/find_settings, which rise/set computations use).  On an
   older Skyfield (e.g., Debian 12 packages 1.45), Celestial now logs an
@@ -1884,20 +2002,19 @@ upgrade instructions.
   report generation with EphemerisRangeError.  Event searches that poke
   past the ephemeris' edge degrade the same way.
 - A corrupt or still-compressed user-installed hip_main.dat discovered
-  after startup now degrades $almanac.hip_<n> tags to per-tag misses
+  after startup now degrades `$almanac.hip_<n>` tags to per-tag misses
   instead of aborting report generation (previously only a missing or
   unreadable file was handled).
 - Named stars now load from the bundled celestial_stars.dat excerpt even
   when a full hip_main.dat is installed (the records are identical),
   eliminating a full scan of the 118,218-record catalog at every WeeWX
-  start.  hip_<n> lookups still prefer the full catalog.
+  start.  `hip_<n>` lookups still prefer the full catalog.
 - Internal hardening: $almanac.separation() computes each binder's
   coordinates with a single observation instead of two, and an
   unrecognized angle key now fails loudly instead of silently returning
   the elongation.
 
-3.0 Release 2026/07/05
-----------------------
+## 3.0 Release 2026/07/05
 - The loop fields have new names, following WeeWX's lowerCamelCase convention
   for observation names (Sunrise -> sunrise, MoonPhase -> moonPhase,
   EarthMoonDistance -> earthMoonDistance, etc.).  In addition, daySunshineDur
@@ -1961,7 +2078,9 @@ upgrade instructions.
   uninstall).  Skyfield does not care about the name.  NOTE: weectl does
   NOT remove files dropped from an extension's file list when upgrading,
   so after upgrading from 2.x, delete the orphaned 17 MB file yourself:
+  ```
   sudo rm <weewx-root>/bin/user/de421.bsp
+  ```
 - Rise/set now honor the almanac's pressure/temperature: refraction is
   scaled from the standard 34 arcminutes, and WeeWX's documented
   pressure=0 idiom turns refraction off (these settings were previously
@@ -2017,7 +2136,9 @@ upgrade instructions.
   without javascript (e.g., with curl).
 - Add a pytest test suite (tests/test_almanac.py), including permanent parity
   audits against the built-in almanac.  Run with:
+  ```
   /path/to/weewx-venv/bin/python -m pytest tests
+  ```
 - Bug fixes in the loop packet code:
   * daySunshineDur was wrong (or missing, due to a crash that was caught and
     logged) around the polar day/night transitions: on the first day of polar
@@ -2034,87 +2155,77 @@ upgrade instructions.
   * Cleaned up type annotations (mypy is now clean), renamed a variable that
     shadowed a Python builtin, and fixed the --help usage text.
 
-2.4 Release 2025/01/28
-----------------------
+## 2.4 Release 2025/01/28
 Bugfix for index out of range when moon phase is new moon.
 
-2.3 Release 2025/01/18
-----------------------
+## 2.3 Release 2025/01/18
 - Add update_rate_secs field to the Celestial section of weewx.conf to limit updating to every 10s (by default).
 
-2.2 Release 2025/01/12
-----------------------
+## 2.2 Release 2025/01/12
 - Rework code to make it testable.
 - Add a test which can be invoked with:
+  ```
   PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --test --out-temp=65.1 --barometer=30.128
   PYTHONPATH=bin/user:/home/weewx/bin python -m celestial --test --out-temp=18.4 --barometer=1020.25 --metric
+  ```
 - Add more type annotations and pass mypy check (in addition to pyflakes3).
 - To be safe, make sure no skyfield exception are raised to WeeWX.  Rather,
   catch them and report in the log.
   Note: if the init successfully loads the ephemneris, these exceptions are
-        not expected.  This is just a safety measure in case there are coding errors.
+  not expected.  This is just a safety measure in case there are coding errors.
 - Add footnote to sample report that the report uses Skyfield and JPL's ephemeris.
 
-2.1 Release 2025/01/06
-----------------------
+## 2.1 Release 2025/01/06
 Critical bug fix: fix crash due to false assumption that moonrise (or moonset) to the next moonrise (or moonset) <= 24 hours.
 include date (not just time) on report for moonrise/moonset.
 
-2.0 Release 2025/01/03
-----------------------
+## 2.0 Release 2025/01/03
 Switch to Skyfield for more accurate results than PyEphem.
 
-1.0 Release 2023/03/01
-----------------------
+## 1.0 Release 2023/03/01
 Add the following fields:
   current.tomorrowSunrise
   current.tomorrowSunset
 
-0.7 Release 2023/01/14
-----------------------
+## 0.7 Release 2023/01/14
 Fixed import (weeutil.Moon) as reported by user.
 
-0.6 Release 2022/12/??
-----------------------
+## 0.6 Release 2022/12/??
 Added a sample report modeled after WeeWX's Seasons' Celestial page.
 All values in the sample report update on every loop record.
 
-0.5 Release 2022/12/21
-----------------------
+## 0.5 Release 2022/12/21
 Added the following:
-  current.daySunshineDur
-  current.yesterdaySunshineDur
 
-0.4 Release 2022/12/20
-----------------------
+- `current.daySunshineDur`
+- `current.yesterdaySunshineDur`
+
+## 0.4 Release 2022/12/20
 1. Added the following:
-   current.Sunrise
-   current.SunTransit
-   current.Sunset
-   current.CivilTwilightStart
-   current.CivilTwilightEnd
-   current.NauticalTwilightStart
-   current.NauticalTwilightEnd
-   current.AstronomicalTwilightStart
-   current.AstronomicalTwilightEnd
-   current.NextSolstice
-   current.NextEquinox
-   current.Moonrise
-   current.MoonTransit
-   current.Moonset
-   current.NextNewMoon
-   current.NextFullMoon
+   - `current.Sunrise`
+   - `current.SunTransit`
+   - `current.Sunset`
+   - `current.CivilTwilightStart`
+   - `current.CivilTwilightEnd`
+   - `current.NauticalTwilightStart`
+   - `current.NauticalTwilightEnd`
+   - `current.AstronomicalTwilightStart`
+   - `current.AstronomicalTwilightEnd`
+   - `current.NextSolstice`
+   - `current.NextEquinox`
+   - `current.Moonrise`
+   - `current.MoonTransit`
+   - `current.Moonset`
+   - `current.NextNewMoon`
+   - `current.NextFullMoon`
 
 2. Require Python 3.9 or higher.
 
-0.3 Release 2022/12/19
-----------------------
+## 0.3 Release 2022/12/19
 Add current.MoonPhase and current.MoonFullness
 
-0.2 Release 2022/12/19
-----------------------
+## 0.2 Release 2022/12/19
 Add distances from earth to all other planets (plus Pluto)
 
-0.1 Release 2022/12/19
-----------------------
+## 0.1 Release 2022/12/19
 Initial release.

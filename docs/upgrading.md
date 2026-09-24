@@ -23,6 +23,19 @@ skin changes, and no file has to be deleted.  Reload any page you have
 open: the javascript is served with the version in its URL, so a browser
 holding the previous release's copy takes the new one on the next load.
 
+9.6 requires **weewx-skyfield 2.7** if you run it: upgrade
+weewx-skyfield first, since the installer refuses an older one, naming
+the version it found.  Having none at all is not a refusal.  On a phone
+the sky dome, the Next Visible Pass chart and the Geocentric dial are now
+drawn for a phone — a second drawing, not the same one with larger
+words — and on a desk the drawings are as they were, with larger labels:
+they had been rendering at 9.4px, which no standard calls legible.  If
+you embed these
+panels in a skin of your own and declare `[CelestialFragments]` sets,
+read [Embedding the panels](own-skin.md#the-two-drawings) before you
+upgrade: a set's `narrow_label_scale` and `narrow_media` no longer reach
+a reader on a phone.
+
 9.5 requires **weewx-skyfield 2.6.1** if you run it: upgrade
 weewx-skyfield first, since the installer refuses an older one, naming
 the version it found.  Having none at all is not a refusal.  The two
@@ -32,7 +45,7 @@ with its time takes a comma ("Sep 15, 3:53 PM"), and a countdown shows
 one symbol per unit ("9 h 35 m", "in 5 m") instead of `hh:mm:ss`.
 Other languages keep their own words and their 24-hour clocks.  Nothing
 to do, unless you keep a lang file of your own for the Celestial skin:
-its renamed and new `[Texts]` keys are listed in `changes.txt`, and an
+its renamed and new `[Texts]` keys are listed in `changes.md`, and an
 entry under an old key simply stops being read.  A skin of your own that
 copies `celestial.js` should copy the new one; its config gains the key
 `clock`, which `config_script` writes.
@@ -110,7 +123,7 @@ while the old files sit there; the reason to delete them is that a later
 celestial` removes only the files it installed and leaves a directory it
 did not empty in place, so `skins/Celestial` would outlive the uninstall
 holding nothing but them.  If you had edited one of those files, the
-edit no longer applies — see the 9.0 entry in `changes.txt`.
+edit no longer applies — see the 9.0 entry in `changes.md`.
 
 Two more things to check, only if you ever pinned them.  A
 `search_list_extensions` line under `[[CelestialReport]]
@@ -289,7 +302,7 @@ chips and the comets (8.1) included — the fixed ones from the skin, the
 satellite and comet ones written by the installer for your `[Skyfield]`
 sets.  Your old fields line is neither needed nor touched.
 
-Run weewx-skyfield 2.6.1: 9.5 is pinned to it and the installer refuses an
+Run weewx-skyfield 2.7: 9.6 is pinned to it and the installer refuses an
 older one.  It is what serves the sky dome, the satellite layer, the Next
 Visible Pass chart, the comets and the shower and supermoon chips — the
 sunset, darkness and pass chips are the page's own arithmetic and count
@@ -354,7 +367,7 @@ that through 8.4; it is gone).  The sequence:
 
 1. **Upgrade weewx-loopdata to 7.0 or later** (and install
    [weewx-skyfield](https://chaunceygardiner.github.io/weewx-skyfield/)
-   2.6+ if you have not already).  This extension's installer refuses
+   2.7+ if you have not already).  This extension's installer refuses
    to run beside an older weewx-loopdata, so do it first — before the
    uninstall below leaves you without a page.
 

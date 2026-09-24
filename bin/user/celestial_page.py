@@ -119,6 +119,7 @@ import functools
 import json
 import locale
 import logging
+import traceback
 import math
 import os
 import re
@@ -222,6 +223,11 @@ LABEL_BODIES = GEO_BODIES[:-1] + ('earth',)
 # close to their event; celestial.js's CHIP_WINDOW_SEC is the same
 # number and a test pins the two.
 CHIP_WINDOW_S = 30 * 86400
+
+# The box each frame's drawing rides in when a fragment carries both, and
+# the handle celestial.css switches them by.  Prefixed like every other
+# class this extension puts in a consumer's page.
+FRAME_MARK = '<div class="cel-frame" data-frame="%s">'
 
 # The install pointer the panels' hints link.
 SKYFIELD_LINK = '<a href="https://github.com/chaunceygardiner/weewx-skyfield">weewx-skyfield</a>'
@@ -579,7 +585,42 @@ class FragmentSet(NamedTuple):
     narrow_media: str = ''
 
 
-DEFAULT_SET = FragmentSet('', DEFAULT_PREFIX, 1.0, None)
+# What a set's labels are scaled by when it does not say.  DERIVED, not
+# chosen: a chart is capped at 640px of glass, its smallest label is 10
+# units in a 680 unit frame, and 10 units renders 9.4px there -- under
+# any legibility standard, on every desktop there has ever been.  1.2
+# puts it at 11.3px at the cap and at 11.0px at 624px, which is the
+# width celestial.css lets the wide drawing fall to before it hands over
+# to the narrow one.  The two numbers are one decision.
+DEFAULT_LABEL_SCALE = 1.2
+
+# THE FRAME THRESHOLD, and it belongs to the SET rather than to this
+# file: the width of glass below which a set's desk drawing can no
+# longer carry a legible label, and its phone drawing is the better one.
+#
+# A chart's smallest label is 10 units before the set's label_scale
+# multiplies it, in a frame 680 units across, so on a drawing rendered W
+# pixels wide it lands at 10 x scale x W / 680 px.  Setting that at the
+# 11px floor and solving for W gives the threshold below.  It is
+# therefore a function of the scale and NOT a constant: a set at 0.8
+# needs 935px to stay legible, one at 1.4 only 535px, and a single
+# number would hand the phone drawing to a column that could carry the
+# detailed one -- or, far worse, the detailed one to a column that
+# cannot.
+LABEL_FLOOR_PX = 11.0
+WIDE_FRAME_UNITS = 680.0
+SMALLEST_LABEL_UNITS = 10.0
+
+
+def frame_threshold(label_scale: float) -> float:
+    """The narrowest glass a set's DESK drawing still reads on, in CSS
+    pixels.  Every fragment carries its own, and celestial.js switches
+    frames by it; celestial.css carries the default scale's answer as
+    the floor for a page with no javascript."""
+    return (LABEL_FLOOR_PX * WIDE_FRAME_UNITS
+            / (SMALLEST_LABEL_UNITS * float(label_scale)))
+
+DEFAULT_SET = FragmentSet('', DEFAULT_PREFIX, DEFAULT_LABEL_SCALE, None)
 
 
 def fragment_names(fs: FragmentSet) -> Tuple[List[str], str]:
@@ -659,7 +700,7 @@ def fragment_sets(skin_dict: Any) -> List[FragmentSet]:
             raise ValueError('[CelestialFragments] [[%s]] prefix = %r is not a plain file name '
                              '(letters, digits, - _ .)' % (name, sub.get('prefix')))
         try:
-            label_scale = float(sub.get('label_scale', 1.0))
+            label_scale = float(sub.get('label_scale', DEFAULT_LABEL_SCALE))
         except (TypeError, ValueError):
             label_scale = 0.0
         if not (math.isfinite(label_scale) and label_scale > 0):
@@ -708,9 +749,18 @@ def fragment_sets(skin_dict: Any) -> List[FragmentSet]:
                 raise ValueError('[CelestialFragments] [[%s]] narrow_label_scale = %r is not a '
                                  'positive number' % (name, narrow_raw))
             if '%g' % narrow_scale == '%g' % label_scale:
+                # Worth saying where the base came from: a set that never
+                # declared label_scale took the default, and 9.6 moved
+                # that default from 1.0 to 1.2 -- so a narrow layer of
+                # 1.2 that was a second scale through 9.5.1 is the same
+                # scale now, and weewx-skyfield names layers by %g, so
+                # the two would collide.
+                whence = ('the default since 9.6' if 'label_scale' not in sub
+                          else 'this set')
                 raise ValueError('[CelestialFragments] [[%s]] narrow_label_scale = %r is the '
-                                 "set's label_scale; a second layer needs a different scale"
-                                 % (name, narrow_raw))
+                                 "set's label_scale (%g, %s); a second layer needs a "
+                                 'different scale'
+                                 % (name, narrow_raw, label_scale, whence))
         if bool(narrow_scale) != bool(narrow_media):
             raise ValueError('[CelestialFragments] [[%s]] declares %s without %s; the narrow '
                              'layer takes both, the scale and the media query that selects it'
@@ -1323,7 +1373,16 @@ class CelestialPage:
             return _esc(body_name(texts, comet))
 
     @_panel_guard()
-    def geocentric_html(self, alm: Any) -> str:
+    def geocentric_caption(self, alm: Any) -> str:
+        """The Geocentric's caption text, translated -- what
+        geocentric_html embeds under the dial, for a page that places the
+        explanation itself (geocentric_html(alm, caption=False))."""
+        return '%s · %s' % (
+            self._t("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion"),
+            self._t("Hover or tap any mark for its coordinates."))
+
+    @_panel_guard()
+    def geocentric_html(self, alm: Any, caption: bool = True) -> str:
         """The Geocentric: the dial and the roster.  The dial is an empty
         SVG the javascript builds on the first loop packet (positions,
         trails and rates are javascript-only -- the rates and trails need
@@ -1354,7 +1413,10 @@ class CelestialPage:
         row honestly empty (MPC drops faded comets; absence, never the
         string "None").  Distance-cell ids are the loop keys verbatim
         (almanac.<body>.earth_distance); the derived cells use
-        geo-rate/-au/-alt/-row-<body>."""
+        geo-rate/-au/-alt/-row-<body>.
+
+        caption=False leaves out the caption under the dial and nothing
+        else; geocentric_caption is its text."""
         extras = bool(alm.hasExtras)
         per_au, distance_label = distance_unit(alm)
         texts = almanac_texts(alm)
@@ -1369,9 +1431,9 @@ class CelestialPage:
         out.append('    <svg id="dial" viewBox="0 0 660 660" role="img"')
         out.append('         aria-label="%s"></svg>' % self._t(
             'Geocentric chart: bodies placed by compass azimuth and log distance from Earth'))
-        out.append('    <p class="cel-caption cel-dialcaption">%s · %s</p>' % (
-            self._t("plan view — compass bearing, east to the right · rings step ×10 in distance · solid&nbsp;=&nbsp;above the horizon, dashed&nbsp;=&nbsp;below · trails show the last hour of motion"),
-            self._t("Hover or tap any mark for its coordinates.")))
+        if caption:
+            out.append('    <p class="cel-caption cel-dialcaption">%s</p>'
+                       % self.geocentric_caption(alm))
         out.append('  </div>')
         out.append('  <div class="cel-roster cel-mono">')
         for body in GEO_BODIES[:-1] + tuple(comets) + GEO_BODIES[-1:]:
@@ -1661,17 +1723,125 @@ class CelestialPage:
             self._memo[key] = self._draw_dome(alm, fs, palette)
         return self._memo[key]
 
-    def _label_kwargs(self, fs: FragmentSet) -> Dict[str, Any]:
+    def _label_kwargs(self, fs: FragmentSet, narrow: bool = False) -> Dict[str, Any]:
         """The label arguments a set passes to a skyfield chart method:
         `label_scale` always, and `label_layers=[(scale, query)]` for a
         set with a narrow layer.  9.3 requires weewx-skyfield 2.5, which
         takes that argument, so there is no fallback: a skyfield
         downgraded below it after install raises inside the guarded draw
-        like any other skyfield failure, and the log says so."""
+        like any other skyfield failure, and the log says so.
+
+        The NARROW frame takes neither (9.6).  Both exist to make a
+        desk-sized drawing readable at a size it was not laid out for:
+        `label_scale` compensates for the width a panel is actually
+        rendered at, and a narrow label layer was 9.3's whole answer to
+        a phone.  The narrow frame is laid out at phone size to begin
+        with -- its own type sizes, its census thinned to leave the
+        bigger names room -- so a scale on top of it double-counts (a
+        set at 1.35 would ask for 22 px type), and a layer keyed to a
+        phone would fire inside the one drawing that is never shown to
+        one.  So the narrow drawing is asked for at its own size, and a
+        set's two label keys go on governing the wide drawing exactly as
+        they did -- usefully, for a screen between a phone and a desk,
+        where the wide drawing is still the one on the glass."""
+        if narrow:
+            return {'narrow': True}
         kwargs: Dict[str, Any] = {'label_scale': fs.label_scale}
         if fs.narrow_label_scale:
             kwargs['label_layers'] = [(fs.narrow_label_scale, fs.narrow_media)]
         return kwargs
+
+    @staticmethod
+    def _frames_attr(markup: str, fs: FragmentSet = DEFAULT_SET) -> str:
+        """`data-frames="both"` when a fragment carries BOTH drawings,
+        nothing when it carries one.
+
+        celestial.css hides the drawing the screen does not want, and
+        that rule must never be the reason a panel is blank: if one frame
+        failed to draw, the other is all there is and it shows at every
+        width.  So the switch is scoped to this attribute, which the
+        wrapper can only claim by actually holding a second frame.
+
+        A wrapper that carries two drawings also carries the width at
+        which it changes between them (see frame_threshold), because
+        that width is the SET's and this is the only place a consumer's
+        page can learn it."""
+        if FRAME_MARK % 'narrow' not in markup:
+            return ''
+        return ' data-frames="both" data-frame-at="%.1f"' % frame_threshold(fs.label_scale)
+
+    def _both_frames(self, draw: Any) -> str:
+        """One chart drawn in BOTH of weewx-skyfield 2.7's frames, wide
+        first, concatenated into the one fragment.
+
+        Which frame a reader needs is a question about how wide the
+        chart is RENDERED -- not about the viewport, which is a poor
+        proxy for it, and not about anything a report can know, since it
+        runs with no screen in front of it.  So the page carries both
+        and celestial.css picks with a @container query on the
+        fragment's own width.  That makes a rotation, or a host's column
+        layout, a style recalculation instead of a refetch, and leaves
+        the fetch path, the slot walk and every filename exactly as they
+        were: nothing here knows there are two drawings.  The cost is
+        fragment bytes, and it is smaller than it sounds, because the
+        narrow dome's census is thinned -- measured at the suite's
+        instant, on this skin's own set, a night dome goes 125,847 bytes
+        to 172,749 (20,122 to 29,096 gzipped), and the pass chart 35,110
+        to 67,673 (7,928 to 14,879).
+
+        Each frame is boxed in its own element, and the stylesheet
+        shows one box.  Not the <svg> itself, because a chart is not
+        always only an svg -- pass_chart_html puts the pass's dated head
+        line BESIDE its drawing, and hiding just the drawing would leave
+        that line on the page twice, once from each frame.  The box takes
+        whatever a frame returns, so this stays right if a chart ever
+        grows more furniture.
+
+        `draw(narrow)` is the caller's one-frame render.  A frame that
+        comes back empty contributes NOTHING -- not an empty box -- so an
+        empty pass fragment stays the empty the javascript knows how to
+        read; and a lone surviving frame is emitted bare, exactly as one
+        frame always was, so the wrapper does not claim a switch it
+        cannot make.  A lone WIDE frame is then styled and measured
+        exactly as one frame always was; a lone NARROW one has no box
+        for the stylesheet's cap to find, so celestial.css caps that
+        drawing by its own class as well."""
+        drawn = []
+        failure = None
+        for narrow in (False, True):
+            # Each frame under its OWN guard, so a throw from either --
+            # and the narrow frame is the newer, less traveled path in
+            # weewx-skyfield -- does not discard a drawing that rendered
+            # perfectly.  A frame that fails costs only itself.
+            #
+            # But ONLY while the other one survives.  These renders are
+            # deliberately unguarded (see dome_fragment and
+            # pass_fragment): the generator depends on a failure
+            # REACHING it, because that is what makes it keep the file
+            # already on disk.  Swallowing a total failure here would
+            # have it write a well-formed EMPTY fragment over a good
+            # one, which the javascript reads as the deliberate "no
+            # visible pass" -- a hidden panel, or a blank sky, in place
+            # of the last chart that worked.  So if nothing drew, the
+            # first failure goes on up, traceback and all.
+            try:
+                markup = str(draw(narrow))
+            except Exception as exc:
+                if failure is None:
+                    failure = exc
+                log.error('celestial: the %s drawing failed',
+                          'narrow' if narrow else 'wide')
+                log.error(traceback.format_exc())
+                continue
+            if markup.strip():
+                drawn.append((narrow, markup))
+        if not drawn and failure is not None:
+            raise failure
+        if len(drawn) < 2:
+            return ''.join(markup for _narrow, markup in drawn)
+        return ''.join((FRAME_MARK % ('narrow' if narrow else 'wide'))
+                       + markup.strip() + '</div>'
+                       for narrow, markup in drawn)
 
     @_panel_guard(label='weewx-skyfield dome_svg')
     def _draw_dome(self, alm: Any, fs: FragmentSet, palette: str) -> str:
@@ -1686,7 +1856,9 @@ class CelestialPage:
         sp = self.sky_page
         if sp is None:
             return ''
-        return str(sp.dome_svg(alm, palette=palette, **self._label_kwargs(fs)))
+        return self._both_frames(
+            lambda narrow: sp.dome_svg(alm, palette=palette,
+                                       **self._label_kwargs(fs, narrow)))
 
     def _can_draw(self, alm: Any, fs: FragmentSet) -> bool:
         """Whether the sky can be drawn -- the gate the pass panel and both
@@ -1715,7 +1887,8 @@ class CelestialPage:
         return bool(self._dome_svg(alm, fs))
 
     def _dome_wrapper(self, alm: Any, ts: int, slot: Optional[int], step: int, count: int,
-                      interval: int, palette: str, svg: str) -> str:
+                      interval: int, palette: str, svg: str,
+                      fs: FragmentSet = DEFAULT_SET) -> str:
         """The self-describing wrapper around a dome SVG, the ONE shape
         celestial.js's domeFragMeta parses: the page's own wrapper
         (dome_html, no slot -- that dome is the cycle instant, slot 0 by
@@ -1733,6 +1906,7 @@ class CelestialPage:
         attrs += (' data-dome-step="%d" data-dome-count="%d" data-dome-interval="%d" '
                   'data-dome-palette="%s" data-page-theme="%s"'
                   % (step, count, interval, palette, self.theme(alm)))
+        attrs += self._frames_attr(svg, fs)
         return '<div class="domefrag" %s>%s</div>' % (attrs, svg)
 
     def _pass_chart(self, alm: Any, fs: FragmentSet) -> str:
@@ -1864,14 +2038,35 @@ class CelestialPage:
         return '\n'.join(out)
 
     @_panel_guard()
-    def dome_html(self, alm: Any, set: str = '') -> str:
+    def dome_caption(self, alm: Any, set: str = '') -> str:
+        """The sky dome's caption text, translated -- what dome_html(alm,
+        set) embeds under the dome, for a page that places the
+        explanation itself (dome_html(alm, set, caption=False)).  '' in
+        exactly the states where that panel carries no caption: a refused
+        set, a sky that cannot be drawn, a drawing that came back empty
+        -- the same _resolve and the same memoized dome the panel stands
+        on, so the two cannot disagree."""
+        r = self._resolve(alm, set, 'dome_caption', 'dome')
+        if r.fs is None or not self._dome_svg(alm, r.fs):
+            return ''
+        return self._dome_caption_text()
+
+    def _dome_caption_text(self) -> str:
+        return '%s %s' % (
+            self._t("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon."),
+            self._t("Hover or tap any mark for its coordinates."))
+
+    @_panel_guard()
+    def dome_html(self, alm: Any, set: str = '', caption: bool = True) -> str:
         """The sky dome (see _dome_html), behind its declaration line --
         the dome carries the panel's line; its roster, a part of the
-        same panel, never does, so a grid holding both shows it once."""
+        same panel, never does, so a grid holding both shows it once.
+        caption=False leaves out the caption and nothing else;
+        dome_caption is its text."""
         r = self._resolve(alm, set, 'dome_html', 'dome')
-        return self._behind_line(r.line, self._dome_html(alm, r))
+        return self._behind_line(r.line, self._dome_html(alm, r, caption))
 
-    def _dome_html(self, alm: Any, r: 'Resolved') -> str:
+    def _dome_html(self, alm: Any, r: 'Resolved', caption: bool = True) -> str:
         """The sky dome: weewx-skyfield's dome_svg for the named set (its
         plate and label scale) inside the wrapper the javascript swaps
         and reads, the caption, and the backdrop's health line.  The
@@ -1934,10 +2129,9 @@ class CelestialPage:
         out.append('  <div id="dome-svg" data-dome-prefix="%s" data-dome-dir="%s">%s</div>'
                    % (fs.prefix, fs.directory,
                       self._dome_wrapper(alm, int(alm.time_ts), None, step, count,
-                                         interval, palette, svg)))
-        out.append('  <p class="cel-caption cel-dialcaption">%s %s</p>' % (
-            self._t("North at the top, east at the left — the sky-chart orientation, as if lying on your back looking up.  Altitude rings at 30° and 60°; the rim is the horizon."),
-            self._t("Hover or tap any mark for its coordinates.")))
+                                         interval, palette, svg, fs)))
+        if caption:
+            out.append('  <p class="cel-caption cel-dialcaption">%s</p>' % self._dome_caption_text())
         out.append('  <p class="cel-stalehint" id="dome-stale" hidden><span id="dome-stale-msg"></span>'
                    ' · <a href="%s">%s</a></p>' % (FROZEN_LINK, self._t("what to check")))
         out.append('</div>')
@@ -1959,14 +2153,38 @@ class CelestialPage:
                             self._t("Satellites · the next pass overhead"), 'any-', 4)
 
     @_panel_guard()
-    def pass_html(self, alm: Any, set: str = '') -> str:
+    def pass_caption(self, alm: Any, set: str = '') -> str:
+        """The Next Visible Pass chart's caption text, translated -- what
+        pass_html(alm, set) embeds under the chart, for a page that
+        places the explanation itself (pass_html(alm, set,
+        caption=False)).  '' in exactly the states where that panel
+        carries no caption: a refused set or a sky that cannot be drawn,
+        through the panel's own _resolve.  With no visible pass in the
+        window the panel still carries its caption, inside the hidden
+        #pass-wrap the script unhides when a pass arrives -- a state that
+        changes in the browser, which generation cannot track, so a page
+        placing the caption itself follows #pass-wrap's hidden attribute,
+        which the script keeps, or lets it stand while only the roster
+        shows."""
+        r = self._resolve(alm, set, 'pass_caption', 'pass')
+        if r.fs is None:
+            return ''
+        return self._pass_caption_text()
+
+    def _pass_caption_text(self) -> str:
+        return self._t(
+            "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.")
+
+    @_panel_guard()
+    def pass_html(self, alm: Any, set: str = '', caption: bool = True) -> str:
         """The Next Visible Pass chart (see _pass_html), behind its
         declaration line -- the chart carries the panel's line; its
-        roster never does."""
+        roster never does.  caption=False leaves out the caption and
+        nothing else; pass_caption is its text."""
         r = self._resolve(alm, set, 'pass_html', 'pass')
-        return self._behind_line(r.line, self._pass_html(alm, r))
+        return self._behind_line(r.line, self._pass_html(alm, r, caption))
 
-    def _pass_html(self, alm: Any, r: 'Resolved') -> str:
+    def _pass_html(self, alm: Any, r: 'Resolved', caption: bool = True) -> str:
         """The Next Visible Pass chart: skyfield 2.0's pass_chart_html --
         the whole sky as it will stand at the culmination of the soonest
         upcoming visible pass among the configured satellites, the
@@ -1997,8 +2215,8 @@ class CelestialPage:
         out = ['<div id="pass-wrap" %s%s>' % (PANEL_MARK, '' if '<svg' in chart else ' hidden')]
         out.append('  <div id="pass-chart" data-pass-fragment="%s" data-pass-dir="%s">%s</div>'
                    % (pass_name, fs.directory, chart))
-        out.append('  <p class="cel-caption cel-passcaption">%s</p>' % self._t(
-            "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark."))
+        if caption:
+            out.append('  <p class="cel-caption cel-passcaption">%s</p>' % self._pass_caption_text())
         out.append('</div>')
         return '\n'.join(out)
 
@@ -2099,9 +2317,11 @@ class CelestialPage:
         ts = int(alm.time_ts) + offset
         if palette is None:
             palette = self.palette(alm, fs)
-        svg = sp.dome_svg(alm(almanac_time=ts), palette=palette,
-                          **self._label_kwargs(fs))
-        return self._dome_wrapper(alm, ts, k, step, count, interval, palette, svg)
+        at_slot = alm(almanac_time=ts)
+        svg = self._both_frames(
+            lambda narrow: sp.dome_svg(at_slot, palette=palette,
+                                       **self._label_kwargs(fs, narrow)))
+        return self._dome_wrapper(alm, ts, k, step, count, interval, palette, svg, fs)
 
     def pass_fragment(self, alm: Any, fs: FragmentSet = DEFAULT_SET,
                       palette: Optional[str] = None) -> str:
@@ -2118,15 +2338,16 @@ class CelestialPage:
             return ''
         if palette is None:
             palette = self.palette(alm, fs)
-        chart = str(sp.pass_chart_html(alm, palette=palette,
-                                       **self._label_kwargs(fs)))
+        chart = self._both_frames(
+            lambda narrow: sp.pass_chart_html(alm, palette=palette,
+                                              **self._label_kwargs(fs, narrow)))
         # Wrapped like a dome fragment: the set's plate, which celestial.css
         # styles the chart's labels by, and the report's theme, which the
         # javascript checks for a flip -- so a chart refetched across
         # sunrise never wears the other plate's labels, and a page with
         # no pass in window still sees the flip.
-        return ('<div class="passfrag" data-pass-palette="%s" data-page-theme="%s">%s</div>'
-                % (palette, self.theme(alm), chart.strip()))
+        return ('<div class="passfrag" data-pass-palette="%s" data-page-theme="%s"%s>%s</div>'
+                % (palette, self.theme(alm), self._frames_attr(chart, fs), chart.strip()))
 
 
 class CelestialPanels(SearchList):
