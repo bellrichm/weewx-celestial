@@ -22,6 +22,15 @@
   the outlines of boxes.  A skin that recolored the roster's lines by
   overriding `--line` now overrides `--divider` for them; one that never
   touched `--line` needs nothing.
+- Fixed: on WeeWX 5.5.1 and later, `weectl extension uninstall celestial`
+  left a `[[CelestialReport]]` section behind holding only the satellites
+  and comets field groups: a report with no skin, which stops WeeWX's
+  report run on every archive cycle.  WeeWX 5.5.1 removes a section on
+  uninstall only once it is empty, and only the keys the installer lists;
+  the installer now lists those two groups, so the uninstall removes
+  them.  Installing writes exactly what it wrote before.  weectl
+  uninstalls with the installer saved at install time, so the fix covers
+  a station once this release is installed on it.
 
 ## 9.7 2026/09/21
 - New, for a skin of your own that embeds these panels:

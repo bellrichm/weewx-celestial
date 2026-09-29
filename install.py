@@ -216,6 +216,30 @@ CONFIG = """
 """
 
 
+# The field groups configure() declares under [[CelestialReport]]
+# [[[LoopData]]] [[[[fields]]]].  weectl extension uninstall removes only
+# the keys an installer's config lists, and since WeeWX 5.5.1 removes a
+# section only once it is empty, so these groups, unlisted, kept
+# [[CelestialReport]] alive with no skin, and reportengine stops at a
+# report with no skin every archive cycle.  The installer lists them for
+# the uninstall; configure(), which weectl runs before its merge, takes
+# them out again, so an install writes only what the declaration writes
+# (a group whose set is empty is not written at all).
+CELESTIAL_GROUPS = ('satellites', 'comets')
+
+
+def list_celestial_groups(config):
+    fields = config['StdReport']['CelestialReport']['LoopData']['fields']
+    for group in CELESTIAL_GROUPS:
+        fields[group] = ''
+
+
+def unlist_celestial_groups(config):
+    fields = config['StdReport']['CelestialReport']['LoopData']['fields']
+    for group in CELESTIAL_GROUPS:
+        fields.pop(group, None)
+
+
 class CelestialInstaller(ExtensionInstaller):
     def __init__(self):
         super(CelestialInstaller, self).__init__(
@@ -224,16 +248,10 @@ class CelestialInstaller(ExtensionInstaller):
             description = 'A live celestial report driven by weewx-loopdata almanac fields.',
             author = "John A Kline",
             author_email = "john@johnkline.com",
-            # The satellites and comets groups configure() writes live
-            # under [[[LoopData]]] [[[[fields]]]].  CONFIG lists that
-            # section EMPTY so that weectl extension uninstall prunes it:
-            # weecfg's remove_and_prune pops a section it is told about
-            # once it has no subsections left, and says nothing about one
-            # it is not -- without this entry the uninstall left a
-            # [[CelestialReport]] holding only [[[LoopData]]], with no
-            # skin, and reportengine died on it (KeyError 'skin') every
-            # archive cycle.  Empty, so that the conditional merge after
-            # configure() adds nothing of its own.
+            # CONFIG lists [[[LoopData]]] [[[[fields]]]] empty, and the
+            # groups configure() writes there are listed below (see
+            # CELESTIAL_GROUPS), so that an uninstall takes the whole
+            # [[CelestialReport]] away.
             config = configobj.ConfigObj(StringIO(CONFIG)),
             files = [
                 ('bin/user', [
@@ -261,6 +279,7 @@ class CelestialInstaller(ExtensionInstaller):
                     'skins/Celestial/lang/sv.conf',
                     ]),
             ])
+        list_celestial_groups(self['config'])
 
     def configure(self, engine):
         """Two install-time steps, each independently guarded, and neither
@@ -286,6 +305,7 @@ class CelestialInstaller(ExtensionInstaller):
         Honors weectl's dry run.  Returns True exactly when the
         configuration was modified; either step failing degrades to a
         note, never a failed install."""
+        unlist_celestial_groups(self['config'])
         modified = False
         try:
             modified |= self._declare_fields(engine)

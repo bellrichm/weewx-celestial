@@ -14479,9 +14479,11 @@ class TestInstallerDeclaresFields:
         weectl extension uninstall's remove_and_prune must take the
         whole [[CelestialReport]] away -- a leftover section holding
         only [[[LoopData]]] has no skin, and reportengine dies on it
-        every archive cycle.  The installer's config dict lists the
-        subsection (empty) for exactly this; the merge must add nothing
-        of its own for it."""
+        every archive cycle.  Since WeeWX 5.5.1 a section goes only once
+        it is empty, so the installer lists the two groups, and
+        configure() takes them out before the merge.  weectl loads the
+        installer afresh to uninstall, so the prune below does too; it is
+        run with weecfg's own and with the one before 5.5.1."""
         import configobj
         import weecfg
         from weeutil.config import conditional_merge
@@ -14492,10 +14494,21 @@ class TestInstallerDeclaresFields:
         stanza = config['StdReport']['CelestialReport']
         assert stanza['skin'] == 'Celestial'
         assert set(stanza['LoopData']['fields']) == {'satellites', 'comets'}
-        weecfg.remove_and_prune(config, installer['config'])
-        # (weecfg prunes an emptied [StdReport] as well; the point is
-        # that no [[CelestialReport]] survives.)
-        assert 'CelestialReport' not in config.get('StdReport', {})
+        def before_551(a, b):
+            for k in b:
+                if isinstance(b[k], dict):
+                    if k in a and type(a[k]) is configobj.Section:
+                        before_551(a[k], b[k])
+                        if not a[k].sections:
+                            a.pop(k)
+                elif k in a:
+                    a.pop(k)
+        for prune in (weecfg.remove_and_prune, before_551):
+            pruned = configobj.ConfigObj(config.dict())
+            prune(pruned, self._installer()['config'])
+            # (weecfg prunes an emptied [StdReport] as well; the point is
+            # that no [[CelestialReport]] survives.)
+            assert 'CelestialReport' not in pruned.get('StdReport', {}), prune
 
     def test_merge_adds_no_groups_when_the_sets_are_empty(self):
         """Empty [Skyfield] sets: configure() writes no group, and the
@@ -15793,8 +15806,11 @@ class TestManualInStepWithCode:
         """The LIVE settings install.py writes, flattened to leaf
         key/value pairs.  Read through the installer object rather than
         by parsing the source, so the extractor does not care whether the
-        stanza is a dict or a ConfigObj built from CONFIG."""
-        config = load_installer().CelestialInstaller()['config']
+        stanza is a dict or a ConfigObj built from CONFIG -- as configure()
+        leaves it, without the groups listed only for the uninstall."""
+        installer = load_installer()
+        config = installer.CelestialInstaller()['config']
+        installer.unlist_celestial_groups(config)
 
         pairs = {}
         def flatten(section):
