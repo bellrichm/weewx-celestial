@@ -51,11 +51,11 @@ page you leave open, on which everything moves.
 It is the bundled `Celestial` skin: a row of countdown chips over three
 panels — the Geocentric dial, the live sky dome, and the Next Visible Pass
 chart.  Here it is entire, in the bundled sample report (Palo Alto,
-late evening on 20 September 2026 — the moon, Saturn and Neptune up and
-trailing their wake with Uranus just clearing the horizon, the sun,
-Mercury, Venus, Mars and Jupiter dashed below with comet Halley beside
-Jupiter, Proxima Centauri alone at the rim, Terra's evening pass five
-minutes off in the first chip, and every odometer ticking):
+evening on 2 October 2026 — Saturn and Neptune up and trailing their
+wake, the moon, the sun, Mercury, Venus, Mars, Jupiter and Uranus dashed
+below with comet Halley out beyond Jupiter and Mars, Proxima Centauri
+alone at the rim, Terra's evening pass an hour off in the first chip, the
+Draconids five days out under a 4% moon, and every odometer ticking):
 
 ![The Celestial page](https://raw.githubusercontent.com/chaunceygardiner/weewx-celestial/master/CelestialSampleReport.png)
 

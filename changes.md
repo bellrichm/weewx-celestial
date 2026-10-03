@@ -1,6 +1,6 @@
 # weewx-celestial change history
 
-## 9.7.1 2026/09/25
+## 9.7.1 2026/10/02
 - ACTION REQUIRED, for a skin of your own that embeds these panels: after
   upgrading, RE-COPY celestial.css from skins/Celestial/ into your skin
   and restart WeeWX.  Your skin keeps its own copy of that file, and
