@@ -217,6 +217,12 @@ def as_shadowed_at_generation(html):
     return html.replace(m.group(0), m.group(1) + '0' + m.group(2) + new_circle, 1)
 
 
+def epoch_leaf(v):
+    """A fake time leaf as the page reads one: pinned (.unix_epoch.raw,
+    9.10.1), the spelling every real ValueHelper answers."""
+    return types.SimpleNamespace(unix_epoch=types.SimpleNamespace(raw=v))
+
+
 def _pass_value(p, leaf):
     """One pass field's value as loopdata serializes it: .raw for the
     pinned-unit spellings, the compass name (str, 'N/A' when empty) for
@@ -254,7 +260,7 @@ def sat_feed_packets(report=REPORT_NAME, satellites=True, start=TIME_TS):
     for i, ts in enumerate((start, start + 2, start + 4)):
         alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                     formatter=report_formatter())
-        r = {'current.dateTime.raw': ts,
+        r = {'current.dateTime.unix_epoch.raw': ts,
              'almanac.moon.phase': alm.moon.phase,
              'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
              'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
@@ -396,7 +402,7 @@ def rewindow_pass_chart(markup, rise, sset):
 # step's arrival is recognized by the stamp changing.  The harness's
 # refresh_rate is 2 s, so one run_for(2000) fires exactly one poll.
 STEP_HELPERS = '''
-STAMP = "() => latest === null ? null : latest['current.dateTime.raw']"
+STAMP = "() => latest === null ? null : latest['current.dateTime.unix_epoch.raw']"
 def open_paused(page, url, t0):
     page.clock.install(time=t0)
     page.clock.pause_at(t0 + 0.5)
@@ -832,7 +838,7 @@ def dial_feed():
         for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
             alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                         formatter=report_formatter())
-            r = {'current.dateTime.raw': ts,
+            r = {'current.dateTime.unix_epoch.raw': ts,
                  'almanac.moon.phase': alm.moon.phase,
                  'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
                  'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
@@ -2366,7 +2372,7 @@ class TestSampleSkinRenders:
         # than adopt such a record silently.)
         assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
         assert re.search(r'console\.log\(.loop record has no '
-                         r'current\.dateTime\.raw; ignored.\)', src)
+                         r'current\.dateTime\.unix_epoch\.raw; ignored.\)', src)
         # The LIVE badge's age is read from the SERVER's clock -- the Date
         # header on the response that carried the record, against the
         # record's own station time -- with the two same-clock terms as
@@ -2417,11 +2423,16 @@ class TestSampleSkinRenders:
                         r'data-page-theme="dark"></div>$', out.strip())
 
     def test_javascript_reads_only_the_field_set(self):
-        """The javascript's loop-data keys, expanded the way the include
-        builds them (a per-body prefix plus .az/.alt/.earth_distance, and
-        the literal moon-phase and dateTime keys), must equal
-        PAGE_FIELDS exactly -- the skin consumes the whole
-        page field set and nothing else."""
+        """The keys the script reads for its live values, expanded the way
+        the script builds them (a per-body prefix plus .az/.alt/
+        .earth_distance, the literal moon-phase, clock and event keys
+        listed here), must equal PAGE_FIELDS exactly: every declared field
+        is read and every read field is declared -- one declared key,
+        one read (9.10.1), with no fallback spellings anywhere in the
+        script; the retired ones are banned by name below.  This test
+        does not enumerate the script's reads, so a stray new read is
+        caught only by its key being missing from this list or by that
+        ban."""
         include = open(JS_PATH).read()
         page_py = open(PAGE_PY, encoding='utf-8').read()
         m = re.search(r'var GEO_BODIES = \[(.*?)\];', include, re.DOTALL)
@@ -2438,7 +2449,7 @@ class TestSampleSkinRenders:
         # parenthesized horizon spelling, byte-exact with the fields
         # line), the shower peak/label pair, the supermoon and the
         # eclipse trio.
-        for literal in ('current.dateTime.raw', 'almanac.moon.phase',
+        for literal in ('current.dateTime.unix_epoch.raw', 'almanac.moon.phase',
                         'almanac.next_full_moon.unix_epoch.raw',
                         'almanac.next_new_moon.unix_epoch.raw',
                         'almanac.sun.next_setting.unix_epoch.raw',
@@ -2526,16 +2537,20 @@ class TestSampleSkinRenders:
                            '.perihelion.unix_epoch.raw'):
                 keys.add('almanac.%s%s' % (comet, suffix))
         assert keys == set(celestial.PAGE_FIELDS)
-        # The pre-7.6 unpinned moon keys survive as read fallbacks, and
-        # the pass times, duration and peak altitude keep bare-.raw
-        # fallbacks likewise: the skin's own declaration is pinned, but a
-        # group of your own in the report's stanza that overrides one of
-        # the skin's with the bare spellings still drives the page.
-        for legacy in ('almanac.next_full_moon.raw', 'almanac.next_new_moon.raw'):
-            assert "'%s'" % legacy in include or '"%s"' % legacy in include, legacy
-        for legacy_attr in ('.rise.raw', '.set.raw',
-                            '.max_altitude.raw', '.duration.raw'):
-            assert "'%s'" % legacy_attr in include, legacy_attr
+        # THE RETIRED SPELLINGS ARE BANNED (9.10.1): the unpinned clock
+        # key, the pre-7.6 moon keys and the bare .raw pass times, peak
+        # and duration were read as fallbacks through 9.10, for a group
+        # of your own declared with the unpinned spellings -- values that
+        # follow the report's group_time, which is exactly what the pins
+        # keep off the page.  One declared key, one read.  A source pin is
+        # the right form for a ban on a retired name: the browser leg
+        # that would catch a re-added fallback skips without the pwenv.
+        for retired in ('current.dateTime.raw',
+                        'almanac.next_full_moon.raw', 'almanac.next_new_moon.raw',
+                        '.rise.raw', '.set.raw', '.max_altitude.raw', '.duration.raw'):
+            assert "'%s'" % retired not in include, retired
+            assert '"%s"' % retired not in include, retired
+        assert 'numOr' not in include, 'the fallback reader is retired with its spellings'
 
     def test_no_window_global_collisions(self):
         """Through 8.5 the script ran at window scope, and `var history`
@@ -2807,7 +2822,7 @@ class TestSampleSkinRenders:
         # The group held until set: pass A's window on a later stamp, and a
         # Tiangong window still to come.
         held = dict(closed, **{k: inside[k] for k in window_keys})
-        held['current.dateTime.raw'] = closed['current.dateTime.raw'] + 2
+        held['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 2
         tg = 'almanac.tiangong.next_visible_pass.'
         held.update({tg + 'visible_start.unix_epoch.raw': END_A + 3600,
                      tg + 'visible_end.unix_epoch.raw': END_A + 3700,
@@ -2819,10 +2834,10 @@ class TestSampleSkinRenders:
                   if not k.startswith(nv) or k.endswith('.ordinal_compass')}
         absent.update({k: 'N/A' for k in absent if k.startswith(nv)})
         assert len([k for k in absent if k.startswith(nv)]) == 3
-        absent['current.dateTime.raw'] = closed['current.dateTime.raw'] + 4
+        absent['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 4
         # Exact halves and a compass name that is markup.
         odd = dict(closed)
-        odd['current.dateTime.raw'] = closed['current.dateTime.raw'] + 6
+        odd['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 6
         odd[nv + 'visible_duration.second.raw'] = 150.0
         odd[nv + 'visible_peak_altitude.degree_angle.raw'] = 17.5
         odd[nv + 'visible_start_azimuth.ordinal_compass'] = 'E<b>'
@@ -2831,7 +2846,7 @@ class TestSampleSkinRenders:
         # carry rise and set, no compass points of the window -- NOT
         # declared, so the rows and the chip stand as they were.
         old = {k: v for k, v in closed.items() if '.next_visible_pass.' not in k}
-        old['current.dateTime.raw'] = closed['current.dateTime.raw'] + 10
+        old['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 10
         for sat in ('iss', 'tiangong'):
             old['almanac.%s.next_visible_pass.rise.unix_epoch.raw' % sat] = END_A + 7200
             old['almanac.%s.next_visible_pass.set.unix_epoch.raw' % sat] = END_A + 7800
@@ -2839,11 +2854,11 @@ class TestSampleSkinRenders:
         # times -- the compass points still 'N/A'.
         stale = {k: v for k, v in absent.items()
                  if not k.startswith(('almanac.iss.az', 'almanac.iss.alt', 'almanac.iss.sunlit'))}
-        stale['current.dateTime.raw'] = closed['current.dateTime.raw'] + 12
+        stale['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 12
         # The next window, one figure missing, right after a full sub-line:
         # that sub-line must not stay under it.
         partial = dict(closed)
-        partial['current.dateTime.raw'] = closed['current.dateTime.raw'] + 8
+        partial['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 8
         del partial[nv + 'visible_peak_altitude.degree_angle.raw']
         records = [before_rise, in_shadow, inside, closed, held, absent, odd, partial,
                    old, stale]
@@ -2881,11 +2896,54 @@ class TestSampleSkinRenders:
         httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
         port = httpd.server_address[1]
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        # The last step: the RETIRED spellings run through the page.  A
+        # record carrying the ISS pass and the moon instants under the
+        # bare .raw keys only (a group of a consumer's own, declared with
+        # the unpinned spellings) must read as NO pass and as the default
+        # phase -- one declared key, one read (9.10.1); through 9.10 both
+        # were taken as fallbacks.  The moon is judged by the lit path the
+        # disc draws: the unpinned waning order must equal NO moon keys,
+        # and the pinned waning order must differ (so the instrument can
+        # tell).  The pass row is judged by its text.
+        retired_js = r'''RETIRED = """(rec) => {
+  const lit = () => document.querySelector('#dial .cel-moon-lit').getAttribute('d');
+  const r = Object.assign({}, rec);
+  const t = r['current.dateTime.unix_epoch.raw'];
+  Object.keys(r).forEach(k => {
+    if (k.indexOf('almanac.iss.next_pass.') === 0
+        && /\.(unix_epoch|degree_angle|second)\.raw$/.test(k)) { delete r[k]; }
+  });
+  r['almanac.iss.next_pass.rise.raw'] = t + 600;
+  r['almanac.iss.next_pass.set.raw'] = t + 1200;
+  r['almanac.iss.next_pass.max_altitude.raw'] = 40;
+  r['almanac.iss.next_pass.duration.raw'] = 600;
+  delete r['almanac.next_full_moon.unix_epoch.raw'];
+  delete r['almanac.next_new_moon.unix_epoch.raw'];
+  r['almanac.next_full_moon.raw'] = t + 20 * 86400;
+  r['almanac.next_new_moon.raw'] = t + 5 * 86400;
+  latest = r; latestTs = t;
+  renderPassRow('iss', true, t);
+  renderGeo();
+  const unpinned = lit();
+  delete r['almanac.next_full_moon.raw'];
+  delete r['almanac.next_new_moon.raw'];
+  renderGeo();
+  const none = lit();
+  r['almanac.next_full_moon.unix_epoch.raw'] = t + 20 * 86400;
+  r['almanac.next_new_moon.unix_epoch.raw'] = t + 5 * 86400;
+  renderGeo();
+  const waning = lit();
+  return {anyline: document.getElementById('sat-any-line-iss').textContent,
+          anysub: document.getElementById('sat-any-pass-iss').textContent,
+          unpinned: unpinned, none: none, waning: waning};
+}"""
+'''
         runner = tmp_path / 'runner.py'
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
-            + STEP_HELPERS +
+            + STEP_HELPERS + retired_js +
+            'RECORD = json.loads(%(record)r)[%(report)r]\n'
             'READ = """() => ({\n'
             "  line: document.getElementById('sat-line-iss').textContent,\n"
             "  sub: document.getElementById('sat-pass-iss').textContent,\n"
@@ -2905,9 +2963,11 @@ class TestSampleSkinRenders:
             '    for _ in range(%(more)d):\n'
             '        step(page)\n'
             '        states.append(page.evaluate(READ))\n'
-            "    print(json.dumps({'errors': errors, 'states': states}))\n"
+            '    retired = page.evaluate(RETIRED, RECORD)\n'
+            "    print(json.dumps({'errors': errors, 'states': states, 'retired': retired}))\n"
             '    browser.close()\n'
-            % {'port': port, 't0': T0, 'more': len(packets) - 1})
+            % {'port': port, 't0': T0, 'more': len(packets) - 1,
+               'record': packets[0].decode(), 'report': REPORT_NAME})
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -2964,6 +3024,12 @@ class TestSampleSkinRenders:
         assert stale_s['sub'] == '', stale_s
         for st in out['states']:
             assert st['d'] != 'just set', st
+        # The retired spellings: no pass, default phase (see RETIRED).
+        retired = out['retired']
+        assert retired['anyline'] == 'no pass in the coming week', retired
+        assert retired['anysub'] == '', retired
+        assert retired['unpinned'] == retired['none'], retired
+        assert retired['waning'] != retired['none'], 'the moon instrument cannot tell'
 
     def test_pass_countdown_day_count_in_a_real_browser(self, wxskyfield_almanac,
                                                         tmp_path):
@@ -3268,7 +3334,7 @@ class TestSampleSkinRenders:
         # packet derives no rates, so the title holds exactly these values.
         (tmp_path / 'gauge-data').mkdir()
         (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(loop_file({
-            'current.dateTime.raw': PACKET_TS,
+            'current.dateTime.unix_epoch.raw': PACKET_TS,
             'almanac.mars.az': 120.0,
             'almanac.mars.alt': 30.0,
             'almanac.mars.earth_distance': 1.66}))
@@ -3481,7 +3547,7 @@ class TestSampleSkinRenders:
 
         def packet(i, sunlit):
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0 + 0.1 * i,
@@ -3660,7 +3726,7 @@ class TestSampleSkinRenders:
             # 2.12); the chart's own window is the whole pass.
             rolled = now >= chart_set - 60
             return loop_file({
-                'current.dateTime.raw': now,
+                'current.dateTime.unix_epoch.raw': now,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0 - 0.5 * i,
@@ -3845,7 +3911,7 @@ class TestSampleSkinRenders:
         # the page's clock still, which is the state the latch is for.
         (tmp_path / 'gauge-data').mkdir()
         (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(loop_file({
-            'current.dateTime.raw': PACKET_TS,
+            'current.dateTime.unix_epoch.raw': PACKET_TS,
             'almanac.iss.az': 120.0,
             'almanac.iss.alt': 45.0,
             'almanac.iss.sunlit': True,
@@ -3967,7 +4033,7 @@ class TestSampleSkinRenders:
             # the page's stepped clock, on every poll.
             i = state['n']
             return loop_file({
-                'current.dateTime.raw': t0 + 2 * i,
+                'current.dateTime.unix_epoch.raw': t0 + 2 * i,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0,
@@ -4156,7 +4222,7 @@ class TestSampleSkinRenders:
 
         def packet(ts, sun_alt):
             return loop_file({
-                'current.dateTime.raw': ts,
+                'current.dateTime.unix_epoch.raw': ts,
                 # Below the horizon: the live layer HIDES the sun, which
                 # the backdrop drew high (fixture noon).
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': sun_alt,
@@ -4363,7 +4429,7 @@ class TestSampleSkinRenders:
 
         def packet(ts):
             return loop_file({
-                'current.dateTime.raw': ts,
+                'current.dateTime.unix_epoch.raw': ts,
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
                 'almanac.mercury.az': 150.0, 'almanac.mercury.alt': 20.0,
@@ -4526,7 +4592,7 @@ class TestSampleSkinRenders:
             # dome that had NOT frozen would nudge marks and draw a
             # satellite marker within the first two packets.
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 'almanac.sun.az': 180.0 + 0.5 * i,
                 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
@@ -4711,7 +4777,7 @@ class TestSampleSkinRenders:
 
         def packet(i):
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 'almanac.sun.az': 180.0 + 0.5 * i,
                 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
@@ -4859,7 +4925,7 @@ class TestSampleSkinRenders:
 
         def packet_for(ts):
             return loop_file({
-                'current.dateTime.raw': ts,
+                'current.dateTime.unix_epoch.raw': ts,
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                 'almanac.sun.earth_distance': 1.016,
             }).encode()
@@ -5003,7 +5069,7 @@ class TestSampleSkinRenders:
         })
         assert 'data-dome-ts="%s"' % page_dome_ts in frag
         packet = loop_file({
-            'current.dateTime.raw': int(time.time()),
+            'current.dateTime.unix_epoch.raw': int(time.time()),
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
             'almanac.sun.earth_distance': 1.016,
         }).encode()
@@ -5126,7 +5192,7 @@ class TestSampleSkinRenders:
         frag = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (page_dome_ts + 60),
                          frag, count=1).encode()
         packet = loop_file({
-            'current.dateTime.raw': int(time.time()),
+            'current.dateTime.unix_epoch.raw': int(time.time()),
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
             'almanac.sun.earth_distance': 1.016,
         }).encode()
@@ -5279,7 +5345,7 @@ class TestSampleSkinRenders:
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         now = int(time.time())
         packet = loop_file({
-            'current.dateTime.raw': now,
+            'current.dateTime.unix_epoch.raw': now,
             'almanac(horizon=-18).sun.next_setting.unix_epoch.raw': now + 3600,
             'almanac(horizon=-18).sun.next_rising.unix_epoch.raw': now + 7200,
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
@@ -5475,7 +5541,7 @@ class TestSampleSkinRenders:
                 if self.path.startswith('/gauge-data/loop-data.txt'):
                     polls['n'] += 1
                     body = loop_file({
-                        'current.dateTime.raw': phase(polls['n'])[0],
+                        'current.dateTime.unix_epoch.raw': phase(polls['n'])[0],
                         'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                         'almanac.sun.earth_distance': 1.016,
                     }).encode()
@@ -5613,7 +5679,7 @@ class TestSampleSkinRenders:
 
         def packet(i, rolled):
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 # Sunset 4 s out; once it passes, the "feed" rolls
                 # next_setting to tomorrow and the min() flips the chip
                 # to the sooner sunrise.
@@ -5810,7 +5876,7 @@ class TestSampleSkinRenders:
                 'almanac.halley.az': 90.0, 'almanac.halley.alt': 20.0,
                 'almanac.halley.earth_distance': 35.0, 'almanac.halley.mag': 25.0,
                 'almanac.halley.label': 'Halley',
-                'current.dateTime.raw': now + 2 * served['n'],
+                'current.dateTime.unix_epoch.raw': now + 2 * served['n'],
                 'almanac.sun.next_setting.unix_epoch.raw': now + 4000,
                 'almanac.sun.next_rising.unix_epoch.raw': now + 40000,
                 'almanac.next_meteor_shower.peak.unix_epoch.raw': now + 3 * 86400,
@@ -5973,7 +6039,7 @@ class TestSampleSkinRenders:
             # chip arithmetic these assertions check is unchanged.
             base = int(time.time()) + 2 * i
             return loop_file({
-                'current.dateTime.raw': base,
+                'current.dateTime.unix_epoch.raw': base,
                 'almanac.sun.next_setting.unix_epoch.raw': base + 3000,
                 'almanac.sun.next_rising.unix_epoch.raw': base + 40000,
             }).encode()
@@ -6117,13 +6183,14 @@ class TestSampleSkinRenders:
 
     def test_badge_age_comes_from_the_server_clock_in_a_real_browser(
             self, wxskyfield_almanac, tmp_path):
-        """The badge's age is read from the SERVER's clock -- the Date
-        header on the very response that carried the record -- so it is
-        true on the one failure the page's own two terms cannot see:
-        weewxd takes the report cycle and loopdata down together, so the
-        last packet is NEWER than the page (the GEN_TS term clamps to
-        zero, correctly) and the stale file is new to this browser (the
-        elapsed term starts at zero).  Four legs, one browser:
+        """Eight feeds, one browser, one page render.  The first four: the
+        badge's age is read from the SERVER's clock -- the Date header on
+        the very response that carried the record -- so it is true on the
+        one failure the page's own two terms cannot see: weewxd takes the
+        report cycle and loopdata down together, so the last packet is
+        NEWER than the page (the GEN_TS term clamps to zero, correctly)
+        and the stale file is new to this browser (the elapsed term
+        starts at zero).
 
         live    a fresh packet, Date stamped now                LIVE
         dead    the station died an hour ago, Date now          ~3600s ago
@@ -6134,8 +6201,22 @@ class TestSampleSkinRenders:
         reads is exactly why the header is consulted first.  The third
         proves the Age term: without it the proxy's frozen Date reads the
         response as young as it was when it was stored, and the badge
-        would say LIVE over an hour-old sky.  Skips when the playwright
-        env is absent."""
+        would say LIVE over an hour-old sky.
+
+        Two more ride the same session and drive the clock's key,
+        declared pinned to seconds (current.dateTime.unix_epoch.raw,
+        9.10.1) and read under that one name -- no second spelling.  The
+        clock the page adopted is read off the unwrapped build's latestTs:
+
+        pinned   the pinned key                      that value, LIVE
+        legacy   only the unpinned current.dateTime  0, BAD DATA, console
+                 .raw of a pre-9.10.1 declaration    names the pinned key
+
+        The legacy leg is what a station sees between installing 9.10.1
+        and restarting weewxd onto the new declaration, and what a skin
+        of its own sees with the new script over an old clock line: the
+        badge names the fault rather than adopting a value whose unit the
+        page cannot know.  Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
         import socketserver
@@ -6148,23 +6229,41 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)
         STALE = 3600
+        PINNED = 'current.dateTime.unix_epoch.raw'
+        UNPINNED = 'current.dateTime.raw'
+        # The pinned leg's stamp is fixed on its first request, so every
+        # later poll serves the same record (not news to the page) and
+        # the stamp the page adopted can be compared with the one served.
+        stamps = {}
 
-        def body(age_s):
-            """A minimal record, stamped age_s seconds ago on the STATION's
-            clock (the harness's machine is both)."""
-            return loop_file({
-                'current.dateTime.raw': int(time.time()) - age_s,
-                'almanac.sun.next_setting.unix_epoch.raw': int(time.time() + 3000),
-                'almanac.sun.next_rising.unix_epoch.raw': int(time.time() + 40000),
-            }).encode()
+        def record(stamp, clock):
+            """A minimal record stamped `stamp` on the STATION's clock (the
+            harness's machine is both), the clock written under the keys
+            `clock` asks for."""
+            r = {'almanac.sun.next_setting.unix_epoch.raw': stamp + 3000,
+                 'almanac.sun.next_rising.unix_epoch.raw': stamp + 40000}
+            r.update(clock(stamp))
+            return loop_file(r).encode()
+
+        CLOCKS = {
+            'pinned': lambda t: {PINNED: t},
+            'legacy': lambda t: {UNPINNED: t},
+        }
+
+        def body(mode):
+            if mode == 'live':
+                return record(int(time.time()), CLOCKS['pinned'])
+            if mode in CLOCKS:
+                return record(stamps.setdefault(mode, int(time.time())), CLOCKS[mode])
+            return DEAD_BODY
 
         # The three dead legs serve ONE file, unchanging, which is what a
         # station that stopped writing leaves behind -- so the elapsed
         # term is stamped once, on the first poll, and every later poll
         # repaints the badge from a record that never advances.
-        DEAD_BODY = body(STALE)
+        DEAD_BODY = record(int(time.time()) - STALE, CLOCKS['pinned'])
 
         class Feed(http.server.SimpleHTTPRequestHandler):
             mode = 'live'
@@ -6172,7 +6271,7 @@ class TestSampleSkinRenders:
             def do_GET(self):
                 if not self.path.startswith('/gauge-data/loop-data.txt'):
                     return super().do_GET()
-                out = body(0) if self.mode == 'live' else DEAD_BODY
+                out = body(self.mode)
                 if self.mode in ('cached', 'nodate'):
                     # send_response_only writes no Date and no Server of
                     # its own, so this leg controls both: an intermediate
@@ -6198,7 +6297,7 @@ class TestSampleSkinRenders:
             def log_message(self, *a):
                 pass
 
-        MODES = ('live', 'dead', 'cached', 'nodate')
+        MODES = ('live', 'dead', 'cached', 'nodate', 'pinned', 'legacy')
         servers = {}
         for mode in MODES:
             handler = type('Feed_' + mode, (Feed,), {'mode': mode})
@@ -6217,19 +6316,22 @@ class TestSampleSkinRenders:
             '    for mode, port in PORTS:\n'
             '        page = browser.new_page()\n'
             '        errors = []\n'
+            '        logs = []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "        page.on('console', lambda m: logs.append(m.text))\n"
             '        page.add_init_script(XHR_DONE)\n'
             "        page.goto('http://127.0.0.1:%%d/index.html' %% port)\n"
             "        wait_xhr(page, '/loop-data.txt', 1)   # the badge is written there\n"
-            "        out[mode] = {'errors': errors,\n"
-            "                     'badge': page.inner_text('#live-label')}\n"
+            "        out[mode] = {'errors': errors, 'logs': logs,\n"
+            "                     'badge': page.inner_text('#live-label'),\n"
+            "                     'latestTs': page.evaluate('latestTs')}\n"
             '        page.close()\n'
             '    browser.close()\n'
             'print(json.dumps(out))\n'
             % ([(m, servers[m].server_address[1]) for m in MODES],))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
-                                  text=True, timeout=180)
+                                  text=True, timeout=240)
         finally:
             for httpd in servers.values():
                 httpd.shutdown()
@@ -6245,6 +6347,16 @@ class TestSampleSkinRenders:
         assert out['nodate']['badge'] == 'LIVE', \
             ('the backstop alone cannot see this failure -- which is what '
              'the Date header is for', out['nodate']['badge'])
+        for mode in ('pinned', 'legacy'):
+            assert mode in stamps, 'the %s feed was never asked' % mode
+        assert out['pinned']['latestTs'] == stamps['pinned'], (
+            out['pinned']['latestTs'], stamps['pinned'])
+        assert out['pinned']['badge'] == 'LIVE', out['pinned']['badge']
+        assert out['legacy']['latestTs'] == 0, out['legacy']['latestTs']
+        assert out['legacy']['badge'] == 'BAD DATA \u2014 check loop_data_file', \
+            out['legacy']['badge']
+        assert ('loop record has no %s; ignored' % PINNED) in out['legacy']['logs'], \
+            out['legacy']['logs']
 
     def test_comet_dial_mark_renders_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):
@@ -6276,7 +6388,7 @@ class TestSampleSkinRenders:
         for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
             alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                         formatter=report_formatter())
-            r = {'current.dateTime.raw': ts,
+            r = {'current.dateTime.unix_epoch.raw': ts,
                  'almanac.moon.phase': alm.moon.phase,
                  'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
                  'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
@@ -6506,7 +6618,7 @@ class TestSampleSkinRenders:
 
         (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
         write_assets(tmp_path)
-        record = {'current.dateTime.raw': int(time.time()),
+        record = {'current.dateTime.unix_epoch.raw': int(time.time()),
                   'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                   'almanac.sun.earth_distance': 1.016}
         shapes = {
@@ -9097,20 +9209,20 @@ DIAL_RUNNER = r'''
 import json, sys
 from playwright.sync_api import sync_playwright
 FIXTURE = json.load(open(sys.argv[1]))
-STAMP = "() => latest === null ? null : latest['current.dateTime.raw']"
+STAMP = "() => latest === null ? null : latest['current.dateTime.unix_epoch.raw']"
 DRAW = """(arg) => {
   const rec = Object.assign({}, arg.rec);
   if (arg.rot) {
     Object.keys(rec).forEach(k => { if (/\\.az$/.test(k)) rec[k] = (rec[k] + arg.rot) % 360; });
   }
   const now = Math.floor(Date.now() / 1000);
-  rec['current.dateTime.raw'] = now;
+  rec['current.dateTime.unix_epoch.raw'] = now;
   latest = rec; packets = [];
   if (arg.prev) {
     const pr = Object.assign({}, rec);
     Object.keys(arg.prev).forEach(k => { if (typeof rec[k] === 'number') {
       pr[k] = /\\.az$/.test(k) ? (rec[k] - arg.prev[k] + 720) % 360 : rec[k] - arg.prev[k]; } });
-    pr['current.dateTime.raw'] = now - 600;
+    pr['current.dateTime.unix_epoch.raw'] = now - 600;
     packets = [{t: now - 600, r: pr}, {t: now, r: rec}];
   }
   latestRecvTs = Date.now() / 1000;
@@ -9383,6 +9495,46 @@ class TestPanels:
         m = re.search(r'<div class="cel-count" id="%s"([^>]*)>' % re.escape(chip_id), html)
         assert m is not None, chip_id
         return m.group(1)
+
+    def test_a_group_time_override_changes_nothing_in_the_first_paint(
+            self, wxskyfield_comet_sky):
+        """Every instant the first paint bakes -- the chips' data-ts targets
+        and countdowns, the two rosters' pass lines -- is read pinned to
+        seconds (.unix_epoch.raw, 9.10.1), as the live layer's loop fields
+        are declared.  A bare .raw on a time tag follows the report's
+        group_time: WeeWX's ValueHelper converts on construction with the
+        almanac's converter, so on a report with `group_time =
+        unix_epoch_ms` it answers milliseconds, and through 9.10 the chips
+        first-painted millisecond targets (a countdown of some 55,000
+        years) against the script's seconds clock.  Rendered under a
+        millisecond converter, the three panels must equal the seconds
+        render byte for byte.  The instrument is proven first: the
+        millisecond almanac really does answer a thousandfold on a bare
+        .raw, so an identical render cannot be vacuous."""
+        mod, _ = load_wxskyfield()
+        ms = weewx.units.Converter({'group_time': 'unix_epoch_ms'})
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_comet_sky)
+
+            def panels(converter):
+                alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                            formatter=report_formatter(), converter=converter)
+                page = self.page(make_sky_page())
+                return alm, (page.countdown_html(alm), page.dome_roster_html(alm),
+                             page.pass_roster_html(alm))
+
+            alm_s, seconds = panels(None)
+            alm_ms, millis = panels(ms)
+            # The instrument: the override reaches the tags.
+            bare_s = alm_s.sun.next_setting.raw
+            bare_ms = alm_ms.sun.next_setting.raw
+            assert abs(bare_ms - bare_s * 1000) < 1, (bare_s, bare_ms)
+            assert alm_ms.iss.next_visible_pass.visible_start.raw > 1e11
+            assert alm_ms.mcnaught.perihelion.raw > 1e11
+        # Every chip and every roster line carries a target or a countdown.
+        assert 'data-ts="' in seconds[0]
+        for name, a, b in zip(('countdown', 'dome roster', 'pass roster'), seconds, millis):
+            assert a == b, name
 
     def test_pass_chip_first_paints_every_state(self, wxskyfield_sat_sky):
         """The pass chip's first paint is the live layer's pick at the
@@ -10993,7 +11145,7 @@ class TestPanels:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
         fixture = os.path.join(REPO_ROOT, 'tests', 'fixtures', 'dial-skies.json')
         first = jsonlib.load(open(fixture))['sets'][0]['skies'][0]['rec']
-        packet = loop_file(dict(first, **{'current.dateTime.raw': TIME_TS})).encode()
+        packet = loop_file(dict(first, **{'current.dateTime.unix_epoch.raw': TIME_TS})).encode()
         (tmp_path / 'index.html').write_text(sample_sat_page(wxskyfield_sat_almanac))
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
@@ -11155,7 +11307,7 @@ class TestPanels:
         (tmp_path / 'loop.txt').write_bytes(packet)
         # Four seconds later the ISS has set: the runner swaps this in.
         gone = dict(record)
-        gone['current.dateTime.raw'] += 4
+        gone['current.dateTime.unix_epoch.raw'] += 4
         gone['almanac.iss.alt'] = -10.0
         (tmp_path / 'loop-set.txt').write_bytes(loop_file(gone).encode())
         write_assets(tmp_path)          # the shipped build
@@ -12150,14 +12302,13 @@ class TestPanels:
         load_wxskyfield()
         sp = make_sky_page()
         page = self.page(sp)
-        none = types.SimpleNamespace(raw=None)
         so = types.SimpleNamespace(sunlit=True, next_visible_pass=types.SimpleNamespace(
-            visible_start=none, visible_end=none))
+            visible_start=epoch_leaf(None), visible_end=epoch_leaf(None)))
 
         def pass_obj(rise, sset):
             ord_ = types.SimpleNamespace(ordinal_compass=lambda: 'N')
             return types.SimpleNamespace(
-                rise=types.SimpleNamespace(raw=rise), set=types.SimpleNamespace(raw=sset),
+                rise=epoch_leaf(rise), set=epoch_leaf(sset),
                 rise_azimuth=ord_, culmination_azimuth=ord_, set_azimuth=ord_,
                 max_altitude=types.SimpleNamespace(degree_angle=types.SimpleNamespace(raw=40.0)),
                 duration=types.SimpleNamespace(second=types.SimpleNamespace(raw=600.0)),
@@ -12273,7 +12424,7 @@ class TestPanels:
             def compass(v):
                 return types.SimpleNamespace(ordinal_compass=lambda: v)
             return types.SimpleNamespace(
-                visible_start=at(q['start']), visible_end=at(q['end']),
+                visible_start=epoch_leaf(q['start']), visible_end=epoch_leaf(q['end']),
                 visible_peak_altitude=types.SimpleNamespace(degree_angle=at(q['peak_alt'])),
                 visible_duration=types.SimpleNamespace(second=at(q['duration'])),
                 visible_start_azimuth=compass(q['start_ord']),
@@ -13965,7 +14116,28 @@ class TestPageFields:
         loopdata = load_loopdata()
         for entry in celestial.PAGE_FIELDS:
             if not entry.startswith('almanac'):
-                assert entry == 'current.dateTime.raw'
+                # The clock: loopdata's own current.dateTime, pinned to
+                # seconds (9.10.1).  loopdata's grammar reads the pin as
+                # a unit override, and the override converts the packet's
+                # stamp to THAT unit whatever the report's group_time --
+                # so under a report whose group_time is milliseconds the
+                # pinned entry still answers seconds, where the unpinned
+                # one answers the override.  That difference is the pin's
+                # whole reason, so it is driven here, through loopdata's
+                # own current-field path.
+                assert entry == 'current.dateTime.unix_epoch.raw'
+                cname = loopdata.LoopData.parse_cname(entry)
+                assert cname is not None, entry
+                assert (cname.period, cname.obstype, cname.unit, cname.format_spec) == (
+                    'current', 'dateTime', 'unix_epoch', 'raw')
+                pkt = {'dateTime': TIME_TS, 'usUnits': weewx.METRIC}
+                ms_report = weewx.units.Converter({'group_time': 'unix_epoch_ms'})
+                pinned = loopdata.LoopProcessor.convert_current_obs(
+                    ms_report, cname.obstype, pkt, cname.unit)
+                assert pinned[:2] == (TIME_TS, 'unix_epoch'), pinned
+                unpinned = loopdata.LoopProcessor.convert_current_obs(
+                    ms_report, cname.obstype, pkt, None)
+                assert unpinned[:2] == (TIME_TS * 1000, 'unix_epoch_ms'), unpinned
                 continue
             assert loopdata.LoopData.parse_almanac_field(entry) is not None, entry
 
@@ -16597,7 +16769,7 @@ class TestManualInStepWithCode:
         import io
         page = _doc_text('fields-reference.md')
         shown = configobj.ConfigObj(io.StringIO(
-            _block_containing(page, 'clock = current.dateTime.raw')))
+            _block_containing(page, 'clock = current.dateTime.unix_epoch.raw')))
         declared = [f for value in shown['LoopData']['fields'].values()
                     for f in ([value] if isinstance(value, str) else value)]
         assert len(declared) == len(celestial.static_page_fields()), (
@@ -16655,7 +16827,7 @@ class TestManualInStepWithCode:
         import io
         page = _doc_text('fields-reference.md')
         shown = configobj.ConfigObj(io.StringIO(
-            _block_containing(page, 'clock = current.dateTime.raw')))
+            _block_containing(page, 'clock = current.dateTime.unix_epoch.raw')))
         shipped = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),
                                       encoding='utf-8', file_error=True)
         assert list(shown) == ['LoopData']
@@ -16692,7 +16864,7 @@ class TestManualInStepWithCode:
             if line.startswith('|'):
                 tabled.update(re.findall(r'`([^`]+)`', line))
 
-        accounted = {'current.dateTime.raw'}
+        accounted = {'current.dateTime.unix_epoch.raw'}
         for body in _DIAL_BODIES:
             accounted.update('almanac.%s.%s' % (body, m)
                              for m in ('az', 'alt', 'earth_distance'))

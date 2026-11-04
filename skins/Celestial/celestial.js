@@ -39,7 +39,7 @@ var celestial = (function () {
   // against the config's, which is the version of the Python that built
   // it.  A test keeps this literal in lockstep with the other version
   // sites.
-  var CELESTIAL_JS_VERSION = '9.10';
+  var CELESTIAL_JS_VERSION = '9.10.1';
 
   // ---- the report's configuration, set by start() -------------------------
   // These were the values realtime_updater.inc baked; they keep their
@@ -1758,7 +1758,8 @@ var celestial = (function () {
   // this file now lives in closes that class of bug, and the ring keeps
   // the name it was given to survive it.
   var latest = null;      // last parsed loop-data object
-  var latestTs = 0;       // its current.dateTime.raw; never the browser's time
+  var latestTs = 0;       // its current.dateTime.unix_epoch.raw; never the
+                          // browser's time
   var latestRecvTs = 0;   // when THIS BROWSER received it (its own clock)
   var latestRecvMono = 0; // and the same instant by the browser's monotonic
                           // stopwatch (performance.now, milliseconds), which
@@ -1853,18 +1854,13 @@ var celestial = (function () {
     // The moon's phase, for its dial disc: percent full plus waxing
     // (the next full moon precedes the next new moon).
     var moonFrac = num(latest, 'almanac.moon.phase');
-    // Pinned spellings since 7.6, which the skin's own declaration
-    // uses; the bare .raw keys stay as fallbacks for a `moon` group of
-    // your own in the report's stanza that overrides the skin's with
-    // the unpinned spellings.
+    // Pinned spellings (seconds) since 7.6, as the skin's declaration
+    // writes them.  One declared key, one read (9.10.1): through 9.10
+    // the bare .raw spellings were read as fallbacks for a group of your
+    // own with the unpinned keys, which follow the report's group_time
+    // -- exactly the value the pin exists to keep off this page.
     var nextFull = num(latest, 'almanac.next_full_moon.unix_epoch.raw');
-    if (nextFull === null) {
-      nextFull = num(latest, 'almanac.next_full_moon.raw');
-    }
     var nextNew = num(latest, 'almanac.next_new_moon.unix_epoch.raw');
-    if (nextNew === null) {
-      nextNew = num(latest, 'almanac.next_new_moon.raw');
-    }
     var waxing = (nextFull !== null && nextNew !== null) ? (nextFull < nextNew) : true;
     var litLeft = (STATION_LAT >= 0) ? !waxing : waxing;
     sunDialPt = null;        // re-captured below when the sun has data
@@ -2237,16 +2233,6 @@ var celestial = (function () {
   function hasKey(key) {
     return latest !== null && Object.prototype.hasOwnProperty.call(latest, key);
   }
-  function numOr(primary, fallback) {
-    // The pinned-unit spelling first, the bare .raw as the fallback --
-    // the same drop-in idiom as the 7.6 moon keys.  Null before the
-    // first packet, like everything else read from the feed.
-    if (latest === null) {
-      return null;
-    }
-    var v = num(latest, primary);
-    return v !== null ? v : num(latest, fallback);
-  }
   function strAt(key) {
     return (latest !== null && typeof latest[key] === 'string') ? latest[key] : null;
   }
@@ -2584,16 +2570,18 @@ var celestial = (function () {
     if (!chainDeclared(base, 'rise_azimuth')) {
       return;
     }
-    var rise = numOr(base + '.rise.unix_epoch.raw', base + '.rise.raw');
+    // Pinned-unit spellings only, as declared (seconds, degrees,
+    // seconds of duration): one declared key, one read -- see the moon
+    // keys in renderGeo for why the bare .raw fallbacks are gone.
+    var rise = num(latest, base + '.rise.unix_epoch.raw');
     if (rise === null) {
       noPassRow(lineId, passId, T['no pass in the coming week'], sunlit);
       return;
     }
-    var setTs = numOr(base + '.set.unix_epoch.raw', base + '.set.raw');
+    var setTs = num(latest, base + '.set.unix_epoch.raw');
     setHtml(lineId, fmtDayHM(rise) + ' \u00B7 ' + satWhen(rise, setTs, nowTs));
-    var maxAlt = numOr(base + '.max_altitude.degree_angle.raw',
-                       base + '.max_altitude.raw');
-    var dur = numOr(base + '.duration.second.raw', base + '.duration.raw');
+    var maxAlt = num(latest, base + '.max_altitude.degree_angle.raw');
+    var dur = num(latest, base + '.duration.second.raw');
     var riseOrd = strAt(base + '.rise_azimuth.ordinal_compass');
     var culmOrd = strAt(base + '.culmination_azimuth.ordinal_compass');
     var setOrd = strAt(base + '.set_azimuth.ordinal_compass');
@@ -4579,7 +4567,20 @@ var celestial = (function () {
 
         // Check the date
         // "dateTime": 1578965850,
-        var lastTs = result["current.dateTime.raw"];
+        // The clock is declared pinned to seconds
+        // (current.dateTime.unix_epoch.raw, 9.10.1): a bare .raw on a time
+        // field follows the report's group_time, and a page doing
+        // arithmetic on the value must not move with an override of it.
+        // One declared key, one read.  A feed carrying only the unpinned
+        // current.dateTime.raw under THIS script is a declaration still
+        // naming the old key -- a clock group of the report's own in
+        // weewx.conf, or an embedding skin's clock line behind its
+        // re-copied script -- and the badge says so.  (The bundled page
+        // never meets that: at the restart loopdata writes the pinned key
+        // at once, and this script arrives at the first report cycle
+        // after it; until then the OLD script reads the new feed, and its
+        // console line names the key IT wants.)
+        var lastTs = result["current.dateTime.unix_epoch.raw"];
         if (typeof lastTs !== 'number') {
           // A record with no station timestamp is INVALID and is dropped
           // whole, exactly as if the fetch had never landed: the page's
@@ -4591,10 +4592,10 @@ var celestial = (function () {
           // dome's marks on its own schedule.  8.3.3 and earlier stamped
           // these from the BROWSER's clock, which is the one clock this
           // page may not read; the skin's own declaration (its `clock`
-          // group) always carries current.dateTime.raw, so a feed doing
-          // this is misconfigured and the badge says so.
+          // group) always carries current.dateTime.unix_epoch.raw, so a
+          // feed doing this is misconfigured and the badge says so.
           setHtml("live-label", T['BAD DATA \u2014 check loop_data_file']);
-          console.log('loop record has no current.dateTime.raw; ignored');
+          console.log('loop record has no current.dateTime.unix_epoch.raw; ignored');
           return;
         }
         latest = result;

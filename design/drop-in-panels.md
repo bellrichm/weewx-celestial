@@ -557,7 +557,7 @@ theme = dark
 
 [LoopData]
     [[fields]]
-        clock = current.dateTime.raw
+        clock = current.dateTime.unix_epoch.raw   # pinned since 9.10.1
         sun = almanac.sun.az, almanac.sun.alt, almanac.sun.earth_distance
         ...                                  # the twenty groups of 8.5, unchanged
         eclipse = almanac.next_eclipse.unix_epoch.raw, almanac.next_eclipse_kind

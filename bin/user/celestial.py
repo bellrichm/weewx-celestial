@@ -35,7 +35,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '9.10'
+CELESTIAL_VERSION = '9.10.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -90,10 +90,12 @@ _PLANETS: List[str] = ['mercury', 'venus', 'mars', 'jupiter',
 # pinned to epoch seconds (.unix_epoch) because the page does date math
 # on them, so a [Units] [[Groups]] group_time override on the report must
 # not change their meaning.
-# current.dateTime.raw is loopdata's own field, the live-age indicator
-# and the extrapolation anchor.
+# current.dateTime.unix_epoch.raw is loopdata's own field -- the page's
+# clock, the live-age indicator and the extrapolation anchor -- pinned to
+# seconds for the same reason (9.10.1; through 9.10 it was the unpinned
+# current.dateTime.raw, which the script no longer reads).
 PAGE_FIELDS: List[str] = [
-    'current.dateTime.raw',
+    'current.dateTime.unix_epoch.raw',
     'almanac.sun.az', 'almanac.sun.alt', 'almanac.sun.earth_distance',
     'almanac.moon.az', 'almanac.moon.alt', 'almanac.moon.earth_distance',
     'almanac.moon.phase',

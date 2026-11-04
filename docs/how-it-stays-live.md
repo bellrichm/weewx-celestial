@@ -39,6 +39,14 @@ over/ahead verdict all read this clock, and they all render as packets
 arrive, at loop cadence, because between two packets there is nothing
 new to paint.
 
+The declaration pins that timestamp to seconds
+(`current.dateTime.unix_epoch.raw`), as it pins every instant the page
+does arithmetic on: a bare `.raw` on a time field follows the report's
+`group_time`, and the page's clock must not move with an override of it.
+The report-time first paint reads every instant it bakes the same way,
+so the page says the same thing under any `group_time` before its first
+packet as after it.
+
 The browser's own clock is asked only how long something took — the
 seconds since the last packet, for the motion between packets; the
 seconds since the last fetch, for the throttles; whether a one-second

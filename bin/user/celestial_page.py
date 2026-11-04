@@ -1235,6 +1235,15 @@ class CelestialPage:
         chip whose event the almanac cannot serve renders hidden and
         empty, and the row goes on.  The chips are built in display
         order."""
+        # `now` is seconds, and so is EVERY instant read below: each tag
+        # is read `.unix_epoch.raw` (9.10.1), as the loop fields the live
+        # layer reads are declared.  A bare .raw on a time tag follows the
+        # report's group_time (the ValueHelper converts on construction,
+        # with the almanac's converter), so on a report overriding it the
+        # first paint would bake millisecond targets against this seconds
+        # clock.  The same pin holds in the two roster methods
+        # (_window_lines, _pass_lines); a test renders the three panels
+        # under a millisecond converter and requires the seconds render.
         now = alm.time_ts
         chips: List[str] = []
 
@@ -1268,7 +1277,7 @@ class CelestialPage:
                 try:
                     so = getattr(alm, sn)
                     sp = so.next_visible_pass
-                    st, en = sp.visible_start.raw, sp.visible_end.raw
+                    st, en = sp.visible_start.unix_epoch.raw, sp.visible_end.unix_epoch.raw
                     if st is None or (en is not None and en <= now):
                         continue
                     if best_start is None or st < best_start:
@@ -1301,7 +1310,7 @@ class CelestialPage:
             # names the chip, with its countdown (8.5's order).
             label = v = note = data = ''
             try:
-                peak = alm.next_meteor_shower.peak.raw
+                peak = alm.next_meteor_shower.peak.unix_epoch.raw
                 if peak is not None:
                     label = _esc(alm.next_meteor_shower.label)
                     v = self._dhms(max(0, int(peak - now)))
@@ -1317,7 +1326,8 @@ class CelestialPage:
             # Equinox or solstice, whichever next, named by the season it
             # begins -- the one event whose count-to-zero is exact to the
             # second.
-            ts, _which = _soonest(alm.next_equinox.raw, alm.next_solstice.raw)
+            ts, _which = _soonest(alm.next_equinox.unix_epoch.raw,
+                                  alm.next_solstice.unix_epoch.raw)
             k = '' if ts is None else self._season_key(ts, float(alm.lat) >= 0)
             return self._guest_chip('chip-season', ts, now, k)
 
@@ -1326,14 +1336,15 @@ class CelestialPage:
             # next -- early January and early July, minute-class extremum
             # instants (weewx-skyfield 2.1's next_perihelion/next_aphelion,
             # built on this page's ask).
-            ts, which = _soonest(alm.next_perihelion.raw, alm.next_aphelion.raw)
+            ts, which = _soonest(alm.next_perihelion.unix_epoch.raw,
+                                 alm.next_aphelion.unix_epoch.raw)
             k = ('' if ts is None else
                  self._t('Earth perihelion') if which == 0 else self._t('Earth aphelion'))
             return self._guest_chip('chip-apsis', ts, now, k)
 
         def eclipse_chip() -> str:
             # The kind names the chip, the type dresses its detail.
-            ts = alm.next_eclipse.raw
+            ts = alm.next_eclipse.unix_epoch.raw
             kind = str(alm.next_eclipse_kind)
             if kind not in ('lunar', 'solar'):
                 ts = None
@@ -1348,13 +1359,14 @@ class CelestialPage:
             # while the chip showed, and a chip the script unhid from its
             # baked target was nameless until the feed served the key.)
             cp_obj = getattr(alm, comet)
-            return self._guest_chip('chip-peri-' + comet, cp_obj.perihelion.raw, now,
+            return self._guest_chip('chip-peri-' + comet, cp_obj.perihelion.unix_epoch.raw, now,
                                     self._t('{name} perihelion', name=_esc(cp_obj.label)))
 
         add('chip-pass', pass_chip)
         # Sunset or sunrise, whichever next.
         add('chip-sun', lambda: self._pair_chip(
-            'chip-sun', alm.sun.next_setting.raw, alm.sun.next_rising.raw,
+            'chip-sun', alm.sun.next_setting.unix_epoch.raw,
+            alm.sun.next_rising.unix_epoch.raw,
             self._t('sunset'), self._t('sunrise'), now))
         chips.append(shower_chip())
         # Astronomical darkness, symmetric with the sun chip: darkness
@@ -1362,14 +1374,14 @@ class CelestialPage:
         # care about both ends of the window.  A high-latitude summer
         # where -18 never comes serves nulls and the chip stays hidden.
         add('chip-dark', lambda: self._pair_chip(
-            'chip-dark', alm(horizon=-18).sun.next_setting.raw,
-            alm(horizon=-18).sun.next_rising.raw,
+            'chip-dark', alm(horizon=-18).sun.next_setting.unix_epoch.raw,
+            alm(horizon=-18).sun.next_rising.unix_epoch.raw,
             self._t('darkness begins'), self._t('darkness ends'), now))
         add('chip-season', season_chip)
         add('chip-apsis', apsis_chip)
         # The supermoon guest carries its label whatever the almanac says.
         add('chip-super', lambda: self._guest_chip(
-            'chip-super', alm.next_supermoon.raw, now, self._t('supermoon')),
+            'chip-super', alm.next_supermoon.unix_epoch.raw, now, self._t('supermoon')),
             k=self._t('supermoon'))
         add('chip-eclipse', eclipse_chip)
         # One perihelion chip per configured comet, the last of the
@@ -2011,10 +2023,10 @@ class CelestialPage:
         until set; the almanac itself rolls at its end), or begun with no
         end to read, prints its date and time without a countdown, as the
         live layer does."""
-        start = p.visible_start.raw
+        start = p.visible_start.unix_epoch.raw      # pinned: see countdown_html's head
         if start is None:
             return self._no_pass(so, 'no visible pass in the coming week')
-        end = p.visible_end.raw
+        end = p.visible_end.unix_epoch.raw
         line = self._date_hm(start)
         if alm.time_ts < (start if end is None else end):
             line += ' · ' + self._sat_when(alm, start, end)
@@ -2044,10 +2056,10 @@ class CelestialPage:
         it is again.  The window is next_visible_pass's (`w`, the one the
         visible roster's row read): the same pass's until its window
         closes, when that tag rolls on."""
-        rise = p.rise.raw
+        rise = p.rise.unix_epoch.raw                # pinned: see countdown_html's head
         if rise is None:
             return self._no_pass(so, 'no pass in the coming week')
-        sset = p.set.raw
+        sset = p.set.unix_epoch.raw
         line = self._date_hm(rise) + ' · ' + self._sat_when(alm, rise, sset)
         try:
             sub = _keep_units(self._t('appears {rise} · peaks {alt}° {culm} · disappears {set} · {m} m',
@@ -2063,7 +2075,7 @@ class CelestialPage:
             # The window is the next visible pass's (see passVisibleNow in
             # celestial.js): this pass's while it is to come or open, a
             # later pass's (or none) once it has closed.
-            start, end = w.visible_start.raw, w.visible_end.raw
+            start, end = w.visible_start.unix_epoch.raw, w.visible_end.unix_epoch.raw
             now = alm.time_ts
             visible = (start is not None and end is not None and sset is not None
                        and rise <= start < sset and start <= now < end)

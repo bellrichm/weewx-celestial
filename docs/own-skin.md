@@ -68,12 +68,15 @@ countdown events — you paste into your own `skin.conf`, from
 ```
 [LoopData]
     [[fields]]
-        clock = current.dateTime.raw
+        clock = current.dateTime.unix_epoch.raw
         ...
 ```
 
 They are a skin's own business: `skin.conf` deploys with the skin, so
-this is one edit, not one per machine.  Paste the whole thing unless you
+this is one edit, not one per machine.  The `clock` line is pinned to
+seconds since 9.10.1, and `celestial.js` reads that one key: paste the
+new line together with the new script, and point any script of your own
+that reads the clock from this feed at the pinned key too.  Paste the whole thing unless you
 are showing a subset of the panels — the
 [per-panel groups](fields-reference.md#which-groups-each-panel-reads)
 say what each one actually reads.  A group of your own goes under a name

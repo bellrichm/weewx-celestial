@@ -23,6 +23,21 @@ skin needs editing by hand, and no file has to be deleted.  Reload any page you 
 open: the javascript is served with the version in its URL, so a browser
 holding the previous release's copy takes the new one on the next load.
 
+9.10.1 declares the page's clock as `current.dateTime.unix_epoch.raw`,
+pinned to seconds, where it declared `current.dateTime.raw`, and reads
+that one key.  Restart weewxd after installing, as always.  loopdata
+reads the new declaration at startup and writes the pinned key from its
+first packet; the page and its script catch up at the first report cycle
+after the restart, up to one archive interval later, so a page reloaded
+before that cycle reads `BAD DATA` until it runs.  Reload once the cycle
+has run.  The report-time first paint reads its
+instants pinned the same way.  The bundled page behaves exactly as
+before on every station, since no shipped report overrides
+`group_time`.  If you embed these panels in a skin of your own, the new
+`clock` line and the re-copied `celestial.js` go together, and your own
+scripts that read the clock from the feed move to the pinned key with
+them.
+
 9.8 requires **weewx-skyfield 2.12** if you run it: upgrade
 weewx-skyfield first, since the installer refuses an older one, naming
 the version it found.  Having none at all is not a refusal.  2.12
@@ -270,9 +285,10 @@ station's, for every instant it reasons about — pass rise and set times,
 countdown targets, the header clock — instead of measuring some of them
 against the viewer's own clock.  Once a page has its first loop packet —
 normally a second or two after it loads — nothing looks different on a
-machine whose clock is right.  A loop record carrying no `current.dateTime.raw`
-is now ignored rather than timestamped from the browser; the declaration
-this extension ships always carries it.
+machine whose clock is right.  A loop record carrying no station
+timestamp (`current.dateTime.raw` then; `current.dateTime.unix_epoch.raw`
+since 9.10.1) is ignored rather than timestamped from the browser; the
+declaration this extension ships always carries it.
 
 8.3.3 makes the Next Visible Pass chart's sweeping dot leave the chart
 when the pass ends, instead of jumping back to mid-arc.  The fix reads

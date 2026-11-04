@@ -1,5 +1,19 @@
 # weewx-celestial change history
 
+## 9.10.1 2026/11/04
+- The page works when a report's `group_time` is set to a non-default
+  value.  The loop clock is declared as `current.dateTime.unix_epoch.raw`,
+  pinned to seconds, where it was `current.dateTime.raw`, and every
+  instant the report-time first paint bakes is read pinned the same way.
+  No shipped report changes `group_time`, so the bundled page looks
+  exactly as before.  Restart weewxd after installing; a page reloaded
+  before the first report cycle after the restart reads BAD DATA until
+  that cycle runs.
+- The unpinned `current.dateTime.raw` and the bare `.raw` spellings of
+  the moon and pass keys are no longer read.  A skin of your own that
+  declares them should declare the pinned spellings the shipped skin.conf
+  shows, and re-copy `celestial.js` with the new `clock` line.
+
 ## 9.10 2026/10/28
 - ACTION REQUIRED only if you embed these panels in a skin of your own
   (the bundled Celestial report needs nothing): re-copy `celestial.js`
