@@ -39,6 +39,14 @@ over/ahead verdict all read this clock, and they all render as packets
 arrive, at loop cadence, because between two packets there is nothing
 new to paint.
 
+The declaration pins that timestamp to seconds
+(`current.dateTime.unix_epoch.raw`), as it pins every instant the page
+does arithmetic on: a bare `.raw` on a time field follows the report's
+`group_time`, and the page's clock must not move with an override of it.
+The report-time first paint reads every instant it bakes the same way,
+so the page says the same thing under any `group_time` before its first
+packet as after it.
+
 The browser's own clock is asked only how long something took — the
 seconds since the last packet, for the motion between packets; the
 seconds since the last fetch, for the throttles; whether a one-second
@@ -110,7 +118,8 @@ equinox every two seconds.
 When an event passes, loopdata expires it and publishes the next one, and
 the chip follows on its next packet.  That is why a sunset chip counts to
 zero and then becomes the next sunrise with no reload, and why a pass
-chip rolls to the next pass the moment the current one ends.
+chip rolls to the next pass the moment the current one's visible stretch
+ends.
 
 The report also bakes each event's target timestamp into the page, so a
 chip whose event the feed does not carry — a lesser almanac, a group
@@ -165,12 +174,13 @@ but the open page keeps them current by refetching small fragments:
   the dial, both satellite rosters and the countdown chips stand on the
   loop feed, not on the backdrop, and go on rolling.  See
   [The star field is frozen](troubleshooting.md#the-star-field-is-frozen).
-- **The pass chart**, refetched every five minutes, which is how a
-  completed pass's chart rolls over to the next pass, and how the panel
+- **The pass chart**, refetched every five minutes, which is how the
+  chart rolls over to the next visible pass (the station draws it at the
+  first report cycle after the visible stretch ends), and how the panel
   reappears when a pass enters the window.  The moving dot does not wait
-  for that: the chart states its pass's own rise and set, and past the
-  set the dot leaves the chart, so the gap before
-  the next chart shows the finished arc without a satellite on it, rather
+  for that: the chart states its pass's own rise and set, and if the
+  satellite sets before the next chart arrives the dot leaves the chart,
+  so the gap shows the finished arc without a satellite on it, rather
   than a mark parked somewhere it no longer is.
 
 A skin that serves phones from the same page as desktops gives its
@@ -221,9 +231,13 @@ shares the row with its roster.  A window rule could not see that, and it
 could not see a consuming skin's chrome at all.  The threshold itself is
 derived, and derived per fragment set: a chart's smallest label is 10
 units times that set's `label_scale`, so the width at which it reaches
-11px moves with the scale — 935px at 0.8, 623px at the 1.2 default,
-534px at 1.4.  Each fragment carries its own width as `data-frame-at`,
-and the page honors it.
+the floor moves with the scale — on a phone or tablet, whose floor is
+11px, 935px at 0.8, 623px at the 1.2 default, 534px at 1.4; on a desk,
+whose floor is the 10px the charts are laid out for, 850px, 567px and
+486px.  The device's primary pointer says which (a phone in landscape is
+as wide as a narrow desk window).  Each fragment carries the phone
+width, the desk width is ten elevenths of it, and the page honors the
+one its device takes.
 
 That choice is what makes turning a phone free: it is a style
 recalculation, with nothing fetched and nothing recomputed.  The cost is
@@ -246,7 +260,11 @@ script builds it, so on a flip it simply rebuilds it in the other frame.
 
 No astronomy, and no theme switching.  The javascript does arithmetic —
 differences, rates, linear extrapolation, countdown subtraction — and
-draws.  Every astronomical quantity on the page was computed by the
+draws, placing the dial's names where each reads as its own body's.  The
+nearest it comes to astronomy is there: before the second packet gives
+the trails their rates, it keeps names clear of where each trail is about
+to be drawn, from the sky's turning rate at the mark's own bearing and
+altitude — a placement aid, never drawn or shown as a value.  Every astronomical quantity on the page was computed by the
 almanac in weewxd, and the page does not follow your operating system's
 dark-mode setting: it wears the plate its report was generated with.
 That is a deliberate division: it keeps the page cheap on a phone, and it
@@ -263,7 +281,8 @@ its station's clock calls for and fetches only when that is not the one
 it already has, so a page that is in step with its station asks for
 nothing at all; a page whose station has stopped writing asks for nothing
 either, because its clock has stopped with it.  The one-second tick is
-arithmetic on values already in memory.  Nothing on the page polls
+arithmetic on values already in memory, and placing the dial's names
+again, which takes a few milliseconds a second on a Raspberry Pi.  Nothing on the page polls
 weewxd, and nothing recomputes an ephemeris.
 
 To keep an unattended page from polling forever, it stops after

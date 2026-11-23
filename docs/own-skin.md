@@ -68,12 +68,15 @@ countdown events — you paste into your own `skin.conf`, from
 ```
 [LoopData]
     [[fields]]
-        clock = current.dateTime.raw
+        clock = current.dateTime.unix_epoch.raw
         ...
 ```
 
 They are a skin's own business: `skin.conf` deploys with the skin, so
-this is one edit, not one per machine.  Paste the whole thing unless you
+this is one edit, not one per machine.  The `clock` line is pinned to
+seconds since 9.10.1, and `celestial.js` reads that one key: paste the
+new line together with the new script, and point any script of your own
+that reads the clock from this feed at the pinned key too.  Paste the whole thing unless you
 are showing a subset of the panels — the
 [per-panel groups](fields-reference.md#which-groups-each-panel-reads)
 say what each one actually reads.  A group of your own goes under a name
@@ -328,21 +331,47 @@ one.
 
 **The width is derived per set, not fixed.**  A chart's smallest label is
 10 units times the set's `label_scale`, so the width at which it reaches
-11px moves with the scale: 935px at 0.8, 623px at the 1.2 default, 534px
-at 1.4.  Each fragment carries its own as `data-frame-at`, and
-`celestial.js` applies it.  The stylesheet's own `@container` rule states
-the default scale's width, which is what a page with no javascript keeps
-— correct for any set on the default, and the only number a stylesheet
-can state, since a container query's condition takes no variable.  So if
-you set a `label_scale`, you get the right switching width for free; you
-do not have to compute or maintain one.
+the floor moves with the scale.  There are two floors.  On a phone or
+tablet it is 11px, a small screen's: 935px at 0.8, 623px at the 1.2
+default, 534px at 1.4.  On a desk, with a mouse or trackpad, it is the
+10px the charts are laid out for: 850px, 567px, 486px.  The width cannot
+say which device is showing it — a phone in landscape is as wide as a
+narrow desk window — so the device's primary pointer decides, through
+the media query `(pointer: fine)`; anything not fine keeps the phone
+rule.  Each fragment carries the phone width as `data-frame-at`; the
+desk width is ten elevenths of it, the ratio of the two floors, and
+`celestial.js` applies whichever this device takes to the fragment's
+own width.  The stylesheet's own `@container` rules state the default
+scale's two widths, which is what a page with no javascript keeps —
+correct for any set on the default, and the only numbers a stylesheet
+can state, since a container query's condition takes no variable.  So if you set a `label_scale`, you get the
+right switching width for free; you do not have to compute or maintain
+one.
+
+**Size the box that holds a chart, never the chart.**  The switch
+measures the fragment, so the fragment's width has to be the width the
+drawing is drawn at.  Cap `#dome-svg` and `#pass-chart`, the boxes the
+fragments arrive in, and leave the desk drawing's `<svg>` to fill its
+box.  A desk drawing held narrower than its box by a rule of its own is
+judged by the box, and can be shown too small to read.  The phone
+drawing is another matter: the switch never judges it, so holding it at
+its design size, as this extension's stylesheet does with
+`svg.sky-narrow{max-width:360px}`, is fine.  This
+extension's stylesheet holds both boxes at 640px, so a set at 0.8, whose
+threshold is 935px, always shows the phone drawing; to give it the desk
+drawing in a wider column, lift the cap
+(`#dome-svg, #pass-chart{max-width:none}`).  Through 9.8 the dome's cap
+was on its `<svg>` (`#dome-wrap svg`); a stylesheet of yours that
+overrides that rule should override `#dome-svg` instead.
 
 The phone drawing is a different drawing, not the desk one with larger
 words: 360 units across instead of 680, its own type sizes, and its
 content thinned to make room for them (stars to magnitude 4.0, a
 constellation named only where its figure is wide enough).  Every body,
-satellite, comet and radiant is drawn and named in both.  The Geocentric
-dial does the same thing in the browser, in this extension's own script.
+satellite, comet and radiant is drawn in both.  The Geocentric
+dial does the same thing in the browser, in this extension's own script;
+there a crowded name may be left off on either drawing, where it could
+not sit so that it reads as its own body's (below).
 
 What that means for your markup, if you read a fragment or style one:
 
@@ -364,22 +393,36 @@ What that means for your markup, if you read a fragment or style one:
   two.  Take the one inside the box you mean, or act on both.
 - You do **not** need to match a breakpoint: the panels measure
   themselves.  If you want your chrome to change at the same moment the
-  drawings do, put your own `@container` query on the same wrapper
-  rather than guessing a viewport width.
+  drawings do, key it to the verdict the script writes on the wrapper,
+  `data-frame-fit="wide"` or `"narrow"`, rather than guessing a width:
+  the width differs by device and by set.  A `@container` query on the
+  wrapper at the stylesheet's widths is the fallback for a page with no
+  javascript.
 
 **A set's `narrow_label_scale` and `narrow_media` no longer reach a
 narrow screen.**  They add a second label layout inside the *desk*
 drawing, and where that drawing renders too narrow to be read it is not
-what shows.  They are still accepted and still do their work above that,
-so a set asking for larger labels in the band between a phone and a desk
-— say `"(max-width: 900px)"` — keeps working exactly as it did.  A set
+what shows.  They are still accepted and still do their work wherever
+the desk drawing shows: where the chart's box is at least the set's own
+frame threshold wide (623px at the default `label_scale` on a phone,
+567px on a desk; 935px and 850px at 0.8).
+So a query for larger labels in a band between a phone and a desk — say
+`"(max-width: 900px)"` — keeps working as it did when the chart's box
+can be that wide in that band, and shows nothing when it cannot.  Under
+this extension's 640px cap a set at 0.8 never shows its desk drawing,
+on either device, and so never its layer.  The layer never moves the threshold; to keep
+the desk drawing down to narrower widths, raise the set's `label_scale`,
+which lowers it.  A set
 whose `narrow_media` is a phone breakpoint should drop both keys: a
 phone now gets a drawing made for it, which is what those keys were
 reaching for.
 
 **The dial's label placement measures your type, it does not assume
 it.**  The Geocentric dial places each name against the names already on
-it and drops one it cannot fit rather than stacking it.  The room it
+it, and only where it reads as its own body's: against its mark, or at
+the end of a short dotted line to it, nearer its own mark than any other
+mark, trail or comet tail.  A name that fits nowhere so is dropped
+rather than stacked or written beside another body.  The room it
 reserves is the browser's own measurement of the glyphs it drew — your
 face, at your size, in your language, including whatever the reader's
 device fell back to — taken afresh on every redraw.  So you may size
@@ -392,6 +435,27 @@ cannot do is make room that is not there: on a narrow dial carrying
 large type, expect names to be dropped, and expect *which* ones to vary
 with where the sky has put things.  A dropped name is still reachable —
 its mark keeps its tooltip.
+
+Four things follow for a skin of your own (9.8):
+
+- **A `text-anchor` you give the dial's names has no effect.**  The
+  placement writes every name's anchor, inline, because it decides which
+  side of the mark the name sits on.
+- **The dotted line beside a crowded name is `.cel-leader`**, restyled
+  like any other mark.  Keep it unlike the motion trails (`.cel-trail`,
+  solid and in each body's color), or a reader cannot tell a name's line
+  from a body's path.
+- **Some stylesheets cost the ink measure.**  The placement measures a
+  name's ink with the browser's canvas, and believes it only when the
+  canvas is drawing your face exactly.  A `text-transform`,
+  `font-size-adjust`, `font-stretch`, baseline shift, variation axes or
+  feature settings on the names send them to their whole font box
+  instead: still placed correctly, a little farther from their marks.
+- **A halo, a shadow, a decoration or a filter is allowed for.**  The
+  placement pads the name's box by how far the paint can reach: half a
+  stroke's width (times the miter limit at a miter join, so a halo wants
+  `stroke-linejoin: round`), a shadow's offset and blur, 0.15 em for an
+  underline or overline.
 
 **A set's `label_scale` now defaults to 1.2**, not 1.0.  A chart is
 capped at 640px of glass and its smallest label is 10 units in a 680
@@ -414,10 +478,11 @@ narrow layer:
 ```
 
 The set takes the default `label_scale`, so its frame threshold is 623px
-and a 900px query sits above it — which is what makes the layer reachable
-at all.  Declaring `label_scale = 0.8` here instead would move the
-threshold to 935px and the query would never show anything, because below
-935px this drawing is hidden and the phone one is shown in its place.
+(567px on a desk) and a 900px query sits above it — which is what makes
+the layer reachable at all.  Declaring `label_scale = 0.8` here instead
+would move the threshold to 935px (850px on a desk) and the query would
+never show anything, because below that this drawing is hidden and the
+phone one is shown in its place.
 
 ```
     $celestial.dome_html($almanac, set='stars')
@@ -432,8 +497,8 @@ first paint; nothing is fetched that a desktop does not fetch.  The
 scale reaches only the text: dots, markers and rings are drawn once.
 Hold the query in `skin.conf` to the breakpoint in your stylesheet with a
 test of your own; the browser cannot report a mistyped query, it simply
-never matches.  The keys arrived with weewx-skyfield 2.5; 9.6 requires
-2.7.  Keep the query **above** your set's frame threshold: below it this
+never matches.  The keys arrived with weewx-skyfield 2.5; 9.8 requires
+2.12.  Keep the query **above** your set's frame threshold: below it this
 drawing is hidden and its layers with it (see
 [The two drawings](#the-two-drawings)).
 

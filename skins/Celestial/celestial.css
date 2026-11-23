@@ -329,6 +329,12 @@
  * it from a visible floor (the old ramp started from nothing: the oldest
  * segment landed at 1.02:1, ink spent where no eye can find it). */
 .cel-trail{stroke-width:1.5; stroke-linecap:round}
+/* A crowded name's leader (9.8): the line from its mark to its name when
+ * the name cannot touch the mark.  Dotted, in the secondary text color,
+ * so it reads as nothing a trail is -- a trail is solid, in its body's
+ * color, and fades.  A restyle should keep the two unlike. */
+.cel-leader{stroke:var(--muted); stroke-width:1.4; stroke-linecap:round;
+            stroke-dasharray:0 2.8; fill:none}
 /* Comet marks (javascript-drawn on the dial): a brass diamond with an
  * anti-sunward tail fan, solid when naked-eye bright (mag <= 6), the
  * hollow inversion when fainter or when magnitude is honestly absent --
@@ -351,7 +357,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 .bodylab.cel-dim{fill:var(--muted)}
 .gridlab{font-size:10px; fill:var(--muted)}
 .cel-earthlab{font-size:11px; fill:var(--e-earth); font-variant-caps:small-caps;
-          letter-spacing:.12em; text-anchor:middle}
+          letter-spacing:.12em}
 /* THE DIAL'S NARROW FRAME (9.6).  Below the breakpoint celestial.js
  * rebuilds the dial in a 360-unit frame -- about a unit to the pixel on
  * a phone -- and marks it data-frame="narrow".  These are the sizes that
@@ -413,19 +419,28 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * THE THRESHOLD IS DERIVED, not chosen.  The wide drawing is used only
  * where it is legible: its smallest label is 10 units scaled by the
  * set's label_scale, 12 units at the 1.2 default, in a 680 unit frame
- * -- so it needs 11 x 680 / 12 = 623.3px of glass to put that label at
- * 11px.  Below that the narrow drawing is the better drawing, at any
- * viewport.  celestial.js gives the dial this same number, rounded up,
- * so that an uncustomized page changes all of its drawings at one
- * width rather than showing a desk dial beside a phone-sized dome; a
- * test derives both.
+ * -- so on a phone it needs 11 x 680 / 12 = 623.3px of glass to put
+ * that label at 11px, and on a desk 10 x 680 / 12 = 566.7px to put it
+ * at 10px, the size the charts are laid out for.  11px is a phone's
+ * floor (a small screen held close); a desk is farther away, and there
+ * the question is only whether a drawing is near its own size.  The
+ * WIDTH cannot say which device is showing it -- a phone in landscape
+ * gives a column as wide as a narrow desk window -- so the desk number
+ * applies only where the primary pointer is fine, below.  Below its
+ * number the narrow drawing is the better drawing, at any viewport.
+ * celestial.js gives the dial these same numbers, so that an
+ * uncustomized page changes all of its drawings at one width rather
+ * than showing a desk dial beside a phone-sized dome; a test derives
+ * them all.
  *
  * KNOWN, DELIBERATE: the Nu validator's CSS checker does not yet know
- * container-type or @container and reports both as errors.  They are
- * not defects -- every engine has shipped them since 2023 -- and a
- * browser too old to know the at-rule ignores it and keeps the wide
- * drawing, which is what it had before.  The release gate pins those
- * two errors rather than expecting none, so a third one still fails. */
+ * container-type or @container and reports each as an error: three in
+ * all, the property once and the two @container rules (the second is
+ * the desk rule).  They are not defects -- every engine has shipped them
+ * since 2023 -- and a browser too old to know the at-rule ignores it and
+ * keeps the wide drawing, which is what it had before.  The release gate
+ * pins those three errors rather than expecting none, so a fourth one
+ * still fails. */
 .domefrag, .passfrag{container-type:inline-size}
 /* A drawing is never stretched past the size it was laid out for.  Each
  * of these caps is its frame's own width: 640px for the 660 and 680 unit
@@ -442,7 +457,7 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
  * width. */
 /* The box when there are two drawings, and the drawing itself when
  * there is only one: a frame that draws alone is emitted bare, with no
- * box for the rule above to find, and #dome-wrap svg would otherwise
+ * box for the rule above to find, and its 640px box would otherwise
  * stretch a 360 unit drawing to 640px -- the very thing this cap is
  * here to stop. */
 .cel-frame[data-frame="narrow"],
@@ -455,6 +470,24 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
   .passfrag[data-frames="both"] .cel-frame[data-frame="narrow"]{display:block}
   .domefrag[data-frames="both"] .cel-frame[data-frame="wide"],
   .passfrag[data-frames="both"] .cel-frame[data-frame="wide"]{display:none}
+}
+/* The desk rule: on a fine primary pointer the desk drawing holds down
+ * to 566.7px.  It is here and not only in the script so that a desk
+ * window in the band paints the right drawing first, rather than the
+ * phone one replaced at load.  Only for a fragment drawn at the DEFAULT
+ * scale, the one whose phone width is 623.3 (the attribute every
+ * fragment carries): any other set's desk width is elsewhere (850px at
+ * 0.8), and this rule would hand it a desk drawing too small to read
+ * until the script corrected it.  The extra attribute gives it the
+ * specificity of the data-frame-fit rules below, which come later and
+ * so still win. */
+@media (pointer: fine){
+  @container (min-width: 566.7px){
+    .domefrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="narrow"],
+    .passfrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="narrow"]{display:none}
+    .domefrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="wide"],
+    .passfrag[data-frames="both"][data-frame-at="623.3"] .cel-frame[data-frame="wide"]{display:block}
+  }
 }
 /* AND THE SET'S OWN ANSWER WINS.  The width above is the DEFAULT label
  * scale's; a set that declares another changes frame somewhere else
@@ -488,7 +521,15 @@ svg text{fill:var(--ink); font-family:Charter, Georgia, serif}
 @media (max-width: 1165px){
   .cel-domepanel{display:flex; flex-direction:column; align-items:stretch}
 }
-#dome-wrap svg{max-width:640px; margin:0 auto}
+/* The cap is on the BOX that holds the drawing, never on the drawing, as
+ * #pass-chart's is below.  The frame switch measures the fragment's own
+ * width -- the @container query here and celestial.js alike -- so that
+ * width must be the width the drawing is drawn at.  Capped on the svg,
+ * the fragment measured its whole column while the drawing stood at
+ * 640px, and a set whose own frame threshold lies above 640px (0.8:
+ * 935px) took its desk drawing in a wide column, its smallest label
+ * 7.5px. */
+#dome-svg{max-width:640px; margin:0 auto}
 .cel-roster .cel-eyebrow{margin-top:2px}
 .cel-chip-sat{background:var(--brass)}
 .cel-satline{font-size:max(11px,.8em)}

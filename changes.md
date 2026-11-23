@@ -1,6 +1,142 @@
 # weewx-celestial change history
 
-## 9.7.1 2026/09/25
+## 9.10.1 2026/11/04
+- The page works when a report's `group_time` is set to a non-default
+  value.  The loop clock is declared as `current.dateTime.unix_epoch.raw`,
+  pinned to seconds, where it was `current.dateTime.raw`, and every
+  instant the report-time first paint bakes is read pinned the same way.
+  No shipped report changes `group_time`, so the bundled page looks
+  exactly as before.  Restart weewxd after installing; a page reloaded
+  before the first report cycle after the restart reads BAD DATA until
+  that cycle runs.
+- The unpinned `current.dateTime.raw` and the bare `.raw` spellings of
+  the moon and pass keys are no longer read.  A skin of your own that
+  declares them should declare the pinned spellings the shipped skin.conf
+  shows, and re-copy `celestial.js` with the new `clock` line.
+
+## 9.10 2026/10/28
+- ACTION REQUIRED only if you embed these panels in a skin of your own
+  (the bundled Celestial report needs nothing): re-copy `celestial.js`
+  and `celestial.css` from skins/Celestial/ into your skin and restart
+  WeeWX.  The two move together: a 9.10 stylesheet with an older script
+  paints a desk window's drawing twice at load.  If your own chrome
+  changes at the charts' switching width
+  through a `@container` query at 623px, key it to the wrapper's
+  `data-frame-fit` instead: on a desk the width is now different.
+- On a desk, a chart keeps its desk drawing down to a narrower width.
+  The switch to the phone drawing comes where the desk drawing's
+  smallest label falls under a floor, and that floor was 11px on every
+  device.  11px is a phone's floor; a desk screen sits farther away, and
+  the charts are laid out for 10px labels, so on a device whose primary
+  pointer is a mouse or trackpad the floor is now 10px: the default
+  scale switches at 567px instead of 623px.  Phones and tablets are
+  unchanged.  The device decides because a phone in landscape is as
+  wide as a narrow desk window.  On the bundled page this reaches desk
+  windows about 653-709px wide; a skin that embeds the charts in a
+  narrower column gains more.  The Geocentric dial follows the same
+  rule, so the page still changes all of its drawings together.  The
+  fragment files are unchanged; the script derives the desk width from
+  the phone width they already carry.
+- For a skin of your own whose set has a `narrow_media` layer at a
+  phone breakpoint (say `(max-width: 600px)`): on a desk that layer now
+  shows inside the desk drawing in windows between the two widths,
+  where the phone drawing showed before.  Drop both keys, as the
+  embedding guide has said since 9.6; a phone gets a drawing of its own.
+
+## 9.9 2026/10/28
+- ACTION REQUIRED only if you embed these panels in a skin of your own
+  (the bundled Celestial report needs nothing): re-copy `celestial.css`
+  from skins/Celestial/ into your skin, and `celestial.js` too if you
+  would rather not see a version line in the browser's console, then
+  restart WeeWX.  If your own stylesheet overrides the dome's cap on
+  `#dome-wrap svg`, move that override to `#dome-svg`.
+- Fixed: a fragment set at a `label_scale` below about 1.17 could show
+  its desk drawing where that drawing reads too small.  The dome's 640px
+  cap sat on the drawing, so the switch between the desk and phone
+  drawings, which measures the box the drawing arrives in, saw the whole
+  column: a set at 0.8 in a column wider than its 935px got the desk
+  drawing at 640px, its smallest label 7.5px.  The cap is now on that
+  box, `#dome-svg`, as the pass chart's has always been on `#pass-chart`.
+  The bundled page, on the default 1.2, looks exactly as it did.
+- The embedding guide says to size the box that holds a chart, never
+  the chart, and no longer says a `narrow_media` band between a phone
+  and a desk "keeps working exactly as it did": a narrow layer shows only
+  where the desk drawing does, where the chart's box is at least the
+  set's own frame threshold wide (623px at the default `label_scale`,
+  935px at 0.8), and raising `label_scale` is what keeps the desk drawing
+  at narrower widths.
+
+## 9.8 2026/10/26
+- ACTION REQUIRED: requires weewx-skyfield 2.12 if you run it.  Upgrade
+  weewx-skyfield first; the installer refuses an older one, naming the
+  version it found.  Having none at all is not a refusal.
+- ACTION REQUIRED, for a skin of your own that embeds these panels:
+  re-copy `celestial.js` and `celestial.css` from skins/Celestial/ into
+  your skin and restart WeeWX.  Your `celestial.js` reads satellite fields
+  9.8 no longer declares, and places the dial's names by the rules below;
+  `celestial.css` carries the new dotted line's style.
+- Fixed: the Geocentric dial wrote names beside the wrong bodies, on a
+  phone most of all ("Moon" over Uranus's dot, "Saturn" beside Neptune
+  while "Neptune" sat by Saturn).  Each name now sits against its own
+  mark, measured to the ink of its letters, and only where it is nearer
+  its own mark than any other mark, motion trail or comet tail; where
+  it cannot touch its mark it may hang off a short dotted line, held to
+  the same rule.  A name that fits nowhere so is left off, as before,
+  and its mark still answers a tap.  On a crowded dial that means some
+  bodies about the Sun (Mercury most of all) go unnamed where 9.7.2
+  named them beside another body.  Measured over 211 skies on a phone,
+  9.7.2 put seven in ten of the names it drew where another body was
+  less than twice as far as their own; 9.8 puts none.
+- The dial's ring numbers ("0.01 au", "1 au", ...) now take whichever of
+  eight places around their ring is clear, so they show far more often
+  ("0.01 au" on a phone in about seven skies of ten, where it never
+  showed), and not always on the same spoke.
+- Earth's name is placed like the others, below Earth when there is
+  room, and Earth's mark answers a tap.
+- For a skin of your own: a `text-anchor` on the dial's names no longer
+  has any effect, and the names' dotted line is `.cel-leader`.
+- A visible satellite pass is now weewx-skyfield 2.12's: the satellite
+  sunlit while the sun is at least 6° below the horizon and the
+  satellite at least 10° up, for at least a minute.  The old rule listed
+  passes nobody could see, a few seconds of sunlight low on the horizon.
+- The Next Visible Pass roster now reads the part of the pass you can
+  see: when it begins, then where the satellite appears, how high it
+  peaks, where it disappears and for how many minutes, as weewx-skyfield's
+  own satellites panel does.  The chart is drawn at the highest point of
+  that stretch, which it shows solid on the dashed arc, and its caption
+  says so (a new `[Texts]` key, translated in all nine languages; the
+  old key is gone).
+- The countdown chip counts to the same stretch: `appears in` until it
+  begins, `overhead now` while it lasts, and then the next visible pass.
+  It no longer says `just set`: when the stretch ends the satellite has
+  entered Earth's shadow, sunk low or met the dawn, it has not set.
+- The "next pass overhead" roster still counts every pass, horizon to
+  horizon, and its tag now says `visible` only for a pass still to come
+  that will be, or while the satellite can actually be seen; before and
+  after that stretch it reads `not visible`.
+- Each satellite's Next Visible Pass fields are now the visible stretch
+  (still 19 fields per satellite).  The installer rewrites the satellite groups in `weewx.conf` on
+  install, as always; no hand edit.  A group of your own on the same
+  report that names a satellite's `next_visible_pass.rise` or `.set`
+  keeps that whole group in the feed until the satellite sets (weewx-
+  loopdata groups fields by their chain); the page copes, but read the
+  visible stretch instead.
+- Fixed: a satellite whose next pass disappeared from the feed (none in
+  the coming week) kept the row it was first painted with, counting down
+  to a pass already over, until the page was reloaded.  It now says
+  there is none, and a satellite whose orbital elements go stale while
+  the page is open says that, rather than keep its last pass.
+- Fixed: a pass's minutes now round as weewx-skyfield's do, half to even,
+  so a window of exactly two and a half minutes reads the same on both
+  pages.
+
+## 9.7.2 2026/10/14
+- `--remove-satellite` names both element files it leaves behind:
+  weewx-skyfield 2.10 caches a satellite's elements as
+  `wxskyfield_sat_<norad>.csv`, where earlier releases cached
+  `wxskyfield_sat_<norad>.tle`.
+
+## 9.7.1 2026/10/02
 - ACTION REQUIRED, for a skin of your own that embeds these panels: after
   upgrading, RE-COPY celestial.css from skins/Celestial/ into your skin
   and restart WeeWX.  Your skin keeps its own copy of that file, and
@@ -22,6 +158,15 @@
   the outlines of boxes.  A skin that recolored the roster's lines by
   overriding `--line` now overrides `--divider` for them; one that never
   touched `--line` needs nothing.
+- Fixed: on WeeWX 5.5.1 and later, `weectl extension uninstall celestial`
+  left a `[[CelestialReport]]` section behind holding only the satellites
+  and comets field groups: a report with no skin, which stops WeeWX's
+  report run on every archive cycle.  WeeWX 5.5.1 removes a section on
+  uninstall only once it is empty, and only the keys the installer lists;
+  the installer now lists those two groups, so the uninstall removes
+  them.  Installing writes exactly what it wrote before.  weectl
+  uninstalls with the installer saved at install time, so the fix covers
+  a station once this release is installed on it.
 
 ## 9.7 2026/09/21
 - New, for a skin of your own that embeds these panels:

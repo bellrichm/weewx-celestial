@@ -105,11 +105,23 @@ beside one, but a downgrade gets past it), or this report disabled, or
 renamed without its declaration.  Look at the file's top-level keys
 (`python3 -c "import json; print(list(json.load(open('loop-data.txt'))))"`).
 
-And it means an entry that carries no `current.dateTime.raw`.  The page
-times everything by the station's own clock, which that field carries,
-so a record without it is ignored whole and the browser console says
-so.  The skin's declaration always includes it; only a `clock` group of
-your own in the report's stanza could override it away.
+And it means an entry that carries no `current.dateTime.unix_epoch.raw`.
+The page times everything by the station's own clock, which that field
+carries, so a record without it is ignored whole and the browser console
+says so.  The skin's declaration always includes it.  Two cases, told
+apart by the console line:
+
+- `loop record has no current.dateTime.raw` is the 9.10 script asking
+  for the OLD key, which is normal for up to one archive interval after
+  you restart onto 9.10.1: loopdata writes the pinned key from its first
+  packet, and the page and its script catch up at the first report cycle
+  after the restart.  Wait for that cycle and reload.
+- `loop record has no current.dateTime.unix_epoch.raw` after that cycle
+  is the new script over a feed still writing the old key: a `clock`
+  group of your own in the report's `weewx.conf` stanza (`[StdReport]
+  [[CelestialReport]] [[[LoopData]]] [[[[fields]]]]`) is overriding the
+  skin's, group by group.  Make it name
+  `current.dateTime.unix_epoch.raw`, or remove it.
 
 ## The badge age keeps climbing
 
@@ -321,7 +333,20 @@ not broken — it is telling you the truth.
 
 Also worth knowing: most passes are *not* visible passes.  The "next pass
 overhead" roster counts every pass; the Next Visible Pass panel only
-counts the ones where the satellite is sunlit against a dark enough sky.
+counts the ones where the satellite is sunlit against a dark enough sky
+(the sun at least 6° down) while at least 10° up, for at least a minute.
+
+## A body on the dial has no name
+
+Not a fault.  The dial writes a name only where it reads as that body's:
+against its mark, or at the end of a short dotted line to it, and nearer
+its own mark than any other mark, motion trail or comet tail.  Where no
+such place exists the name is left off rather than written beside
+another body.  It happens most to Mercury, the Sun and Venus, which
+often sit inside one another's marks, and more on a phone, whose bigger
+type has less room.  The mark keeps its name for a tap or a hover, and
+the roster beside the dial lists every body.  Through 9.7.2 the dial
+named such bodies anyway, often beside the wrong mark.
 
 ## A comet's row and diamond are empty
 

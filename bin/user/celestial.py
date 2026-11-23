@@ -35,7 +35,7 @@ import weewx
 # get a logger object
 log = logging.getLogger(__name__)
 
-CELESTIAL_VERSION = '9.7.1'
+CELESTIAL_VERSION = '9.10.1'
 
 if sys.version_info[0] < 3 or (sys.version_info[0] == 3 and sys.version_info[1] < 9):
     raise weewx.UnsupportedFeature(
@@ -90,10 +90,12 @@ _PLANETS: List[str] = ['mercury', 'venus', 'mars', 'jupiter',
 # pinned to epoch seconds (.unix_epoch) because the page does date math
 # on them, so a [Units] [[Groups]] group_time override on the report must
 # not change their meaning.
-# current.dateTime.raw is loopdata's own field, the live-age indicator
-# and the extrapolation anchor.
+# current.dateTime.unix_epoch.raw is loopdata's own field -- the page's
+# clock, the live-age indicator and the extrapolation anchor -- pinned to
+# seconds for the same reason (9.10.1; through 9.10 it was the unpinned
+# current.dateTime.raw, which the script no longer reads).
 PAGE_FIELDS: List[str] = [
-    'current.dateTime.raw',
+    'current.dateTime.unix_epoch.raw',
     'almanac.sun.az', 'almanac.sun.alt', 'almanac.sun.earth_distance',
     'almanac.moon.az', 'almanac.moon.alt', 'almanac.moon.earth_distance',
     'almanac.moon.phase',
@@ -138,21 +140,27 @@ PAGE_FIELDS: List[str] = [
     # to these defaults only when the configuration has no [[Satellites]]
     # section to follow.  An almanac that cannot serve one omits its keys from
     # loop-data.txt (loopdata logs once per field) and the page hides
-    # that layer.  next_visible_pass feeds the Next Visible Pass panel's roster;
-    # next_pass -- any pass, its visible bool the row's visible/not-
-    # visible tag -- feeds the dome's.  Times, the duration and the peak
-    # altitude use pinned-unit spellings -- the 7.5/7.6 doctrine: a
-    # [Units] [[Groups]] override on the report must never change a
-    # field's meaning.
+    # that layer.  next_visible_pass feeds the Next Visible Pass panel's
+    # roster and the countdown chip, and is the pass's VISIBLE WINDOW
+    # only (weewx-skyfield 2.12): no rise or set, because loopdata
+    # expires a group at its latest time leaf and a set in this group
+    # would hold a closed window on the page until the satellite set.
+    # next_pass -- any pass, geometric, rise to set -- feeds the dome's
+    # roster; its visible bool and the next_visible_pass window make the
+    # row's visible/not visible tag.  No window fields in this group:
+    # they are empty on every pass that is not visible, and loopdata
+    # recomputes a group with an empty leaf on every packet.  Times, the duration and the peak altitude use
+    # pinned-unit spellings -- the 7.5/7.6 doctrine: a [Units] [[Groups]]
+    # override on the report must never change a field's meaning.
     'almanac.iss.az', 'almanac.iss.alt', 'almanac.iss.sunlit',
     'almanac.iss.label',
-    'almanac.iss.next_visible_pass.rise.unix_epoch.raw',
-    'almanac.iss.next_visible_pass.set.unix_epoch.raw',
-    'almanac.iss.next_visible_pass.max_altitude.degree_angle.raw',
-    'almanac.iss.next_visible_pass.duration.second.raw',
-    'almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass',
-    'almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass',
-    'almanac.iss.next_visible_pass.set_azimuth.ordinal_compass',
+    'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw',
+    'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw',
+    'almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw',
+    'almanac.iss.next_visible_pass.visible_duration.second.raw',
+    'almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass',
+    'almanac.iss.next_visible_pass.visible_peak_azimuth.ordinal_compass',
+    'almanac.iss.next_visible_pass.visible_end_azimuth.ordinal_compass',
     'almanac.iss.next_pass.rise.unix_epoch.raw',
     'almanac.iss.next_pass.set.unix_epoch.raw',
     'almanac.iss.next_pass.max_altitude.degree_angle.raw',
@@ -163,13 +171,13 @@ PAGE_FIELDS: List[str] = [
     'almanac.iss.next_pass.visible',
     'almanac.tiangong.az', 'almanac.tiangong.alt', 'almanac.tiangong.sunlit',
     'almanac.tiangong.label',
-    'almanac.tiangong.next_visible_pass.rise.unix_epoch.raw',
-    'almanac.tiangong.next_visible_pass.set.unix_epoch.raw',
-    'almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw',
-    'almanac.tiangong.next_visible_pass.duration.second.raw',
-    'almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass',
-    'almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass',
-    'almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass',
+    'almanac.tiangong.next_visible_pass.visible_start.unix_epoch.raw',
+    'almanac.tiangong.next_visible_pass.visible_end.unix_epoch.raw',
+    'almanac.tiangong.next_visible_pass.visible_peak_altitude.degree_angle.raw',
+    'almanac.tiangong.next_visible_pass.visible_duration.second.raw',
+    'almanac.tiangong.next_visible_pass.visible_start_azimuth.ordinal_compass',
+    'almanac.tiangong.next_visible_pass.visible_peak_azimuth.ordinal_compass',
+    'almanac.tiangong.next_visible_pass.visible_end_azimuth.ordinal_compass',
     'almanac.tiangong.next_pass.rise.unix_epoch.raw',
     'almanac.tiangong.next_pass.set.unix_epoch.raw',
     'almanac.tiangong.next_pass.max_altitude.degree_angle.raw',
@@ -1305,10 +1313,11 @@ def remove_satellite(config: Any, tag: str) -> Dict[str, Any]:
         del almanac_names[tag]
         name_entry = 'removed'
     if norad is not None:
-        hints.append('The cached element file wxskyfield_sat_%s.tle (in the '
-                     'wxskyfield directory beside the station database) is '
-                     'not removed; delete it yourself if you want it gone.'
-                     % norad)
+        hints.append('The cached element files wxskyfield_sat_%s.csv and '
+                     'wxskyfield_sat_%s.tle, whichever are there (in the '
+                     'wxskyfield directory beside the station database), are '
+                     'not removed; delete them yourself if you want them gone.'
+                     % (norad, norad))
     if tag in _INSTALLER_DEFAULT_SATELLITES:
         hints.append('%s is a weewx-skyfield installer default: the next '
                      'weectl extension install of weewx-skyfield re-adds it '

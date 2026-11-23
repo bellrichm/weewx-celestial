@@ -78,12 +78,28 @@ satellites and two comets.  They fall into six kinds.
 
 ### The clock (1 entry)
 
-`current.dateTime.raw` — the packet's timestamp, and the page's clock:
-the "updated" stamp, every countdown chip, the rosters' "overhead now"
-and the pass chart's verdict are all reckoned against it, rates are
-derived from consecutive stamps, the `LIVE` badge measures its age
-against the serving machine's clock, and a record without it is dropped
-whole (see [Whose time it is](how-it-stays-live.md#whose-time-it-is)).
+`current.dateTime.unix_epoch.raw` — the packet's timestamp, and the
+page's clock: the "updated" stamp, every countdown chip, the rosters'
+"overhead now" and the pass chart's verdict are all reckoned against it,
+rates are derived from consecutive stamps, the `LIVE` badge measures its
+age against the serving machine's clock, and a record without it is
+dropped whole (see [Whose time it is](how-it-stays-live.md#whose-time-it-is)).
+It is pinned to seconds, like every other time the page does arithmetic
+on: a bare `.raw` on a time field follows the report's `group_time`, so
+a report whose `group_time` were overridden to milliseconds would hand
+the page a clock a thousand times too fast.  Through 9.10 the clock was
+the unpinned `current.dateTime.raw`; the page reads that key no longer.
+A feed carrying only the old key under the new script is a declaration
+still naming it, a `clock` group of the report's own in `weewx.conf` or
+an embedding skin's old `clock` line, and reads `BAD DATA`; the restart
+after installing is told in [Upgrading](upgrading.md#upgrading-within-9x).
+The report-time
+first paint reads its instants pinned the same way (every chip target
+and pass line is `.unix_epoch.raw` in the page's code), so the page says
+the same thing under any `group_time` before the first packet as after
+it.  In a skin of your own the new `clock` line and the new
+`celestial.js` go together, and your own scripts that read the clock
+from the same feed read the pinned key too.
 
 ### Body positions (30 entries)
 
@@ -139,13 +155,13 @@ Per configured satellite, with the satellite's tag in place of `iss`:
 
 ```
 almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label,
-almanac.iss.next_visible_pass.rise.unix_epoch.raw,
-almanac.iss.next_visible_pass.set.unix_epoch.raw,
-almanac.iss.next_visible_pass.max_altitude.degree_angle.raw,
-almanac.iss.next_visible_pass.duration.second.raw,
-almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass,
-almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass,
-almanac.iss.next_visible_pass.set_azimuth.ordinal_compass,
+almanac.iss.next_visible_pass.visible_start.unix_epoch.raw,
+almanac.iss.next_visible_pass.visible_end.unix_epoch.raw,
+almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw,
+almanac.iss.next_visible_pass.visible_duration.second.raw,
+almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass,
+almanac.iss.next_visible_pass.visible_peak_azimuth.ordinal_compass,
+almanac.iss.next_visible_pass.visible_end_azimuth.ordinal_compass,
 almanac.iss.next_pass.rise.unix_epoch.raw,
 almanac.iss.next_pass.set.unix_epoch.raw,
 almanac.iss.next_pass.max_altitude.degree_angle.raw,
@@ -157,9 +173,17 @@ almanac.iss.next_pass.visible
 ```
 
 `az`/`alt`/`sunlit` drive the live marker on the dome; the
-`next_visible_pass` seven feed the Next Visible Pass roster and the pass
-chip; the `next_pass` eight feed the "next pass overhead" roster,
-`visible` being what tags each row.  The skin discovers your satellite
+`next_visible_pass` seven are the pass's visible stretch (weewx-skyfield
+2.12) and feed the Next Visible Pass roster and the pass chip; the
+`next_pass` eight feed the "next pass overhead" roster, `visible` and the
+visible stretch above being what tags each row.  There is
+deliberately no `rise` or `set` in the `next_visible_pass` group:
+weewx-loopdata keeps a group until its latest time passes, and a `set`
+there would hold a finished visible stretch on the page until the
+satellite set.  The same holds for any group of yours on the same
+report — loopdata groups by the field's chain, not by who declared it.
+
+The skin discovers your satellite
 *set* automatically from `[Skyfield] [[Satellites]]` — only the
 declaration is per-satellite, which the installer and
 [`--add-satellite`](satellites-and-comets.md#adding-and-removing-satellites)
@@ -193,8 +217,8 @@ installer-written groups follow the panels its report names in
 | The sky dome | `clock`, the ten body groups — the marks it nudges between backdrops are the sun, the moon and the planets | `satellites` |
 | The Next Visible Pass | `clock` | `satellites` |
 
-`clock` is not optional anywhere: `current.dateTime.raw` is the page's
-whole notion of time, and a record without it is dropped.  Pasting all
+`clock` is not optional anywhere: `current.dateTime.unix_epoch.raw` is
+the page's whole notion of time, and a record without it is dropped.  Pasting all
 the static groups whatever you show is the simple choice — an unread
 group costs one evaluation per packet and nothing else — but a group a
 panel does read has to be there, or that panel first-paints and never
@@ -223,8 +247,10 @@ forty-seven fields that do not depend on your configuration:
 [LoopData]
     [[fields]]
         # The packet's timestamp: the page's clock, the LIVE badge's age
-        # and the extrapolation anchor.
-        clock = current.dateTime.raw
+        # and the extrapolation anchor.  Pinned to seconds (.unix_epoch)
+        # like every other time here: the page does arithmetic on it, so
+        # a group_time override on the report must not move it.
+        clock = current.dateTime.unix_epoch.raw
         # The Geocentric dial and its roster: azimuth places the mark,
         # altitude decides above/below the horizon, earth_distance (raw
         # astronomical units) drives the odometer.  The moon adds its
@@ -266,6 +292,6 @@ sits beside these two:
     [[CelestialReport]]
         [[[LoopData]]]
             [[[[fields]]]]
-                satellites = almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.rise.unix_epoch.raw, almanac.iss.next_visible_pass.set.unix_epoch.raw, almanac.iss.next_visible_pass.max_altitude.degree_angle.raw, almanac.iss.next_visible_pass.duration.second.raw, almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass, almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_visible_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.rise.unix_epoch.raw, almanac.tiangong.next_visible_pass.set.unix_epoch.raw, almanac.tiangong.next_visible_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.duration.second.raw, almanac.tiangong.next_visible_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible
+                satellites = almanac.iss.az, almanac.iss.alt, almanac.iss.sunlit, almanac.iss.label, almanac.iss.next_visible_pass.visible_start.unix_epoch.raw, almanac.iss.next_visible_pass.visible_end.unix_epoch.raw, almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw, almanac.iss.next_visible_pass.visible_duration.second.raw, almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass, almanac.iss.next_visible_pass.visible_peak_azimuth.ordinal_compass, almanac.iss.next_visible_pass.visible_end_azimuth.ordinal_compass, almanac.iss.next_pass.rise.unix_epoch.raw, almanac.iss.next_pass.set.unix_epoch.raw, almanac.iss.next_pass.max_altitude.degree_angle.raw, almanac.iss.next_pass.duration.second.raw, almanac.iss.next_pass.rise_azimuth.ordinal_compass, almanac.iss.next_pass.culmination_azimuth.ordinal_compass, almanac.iss.next_pass.set_azimuth.ordinal_compass, almanac.iss.next_pass.visible, almanac.tiangong.az, almanac.tiangong.alt, almanac.tiangong.sunlit, almanac.tiangong.label, almanac.tiangong.next_visible_pass.visible_start.unix_epoch.raw, almanac.tiangong.next_visible_pass.visible_end.unix_epoch.raw, almanac.tiangong.next_visible_pass.visible_peak_altitude.degree_angle.raw, almanac.tiangong.next_visible_pass.visible_duration.second.raw, almanac.tiangong.next_visible_pass.visible_start_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.visible_peak_azimuth.ordinal_compass, almanac.tiangong.next_visible_pass.visible_end_azimuth.ordinal_compass, almanac.tiangong.next_pass.rise.unix_epoch.raw, almanac.tiangong.next_pass.set.unix_epoch.raw, almanac.tiangong.next_pass.max_altitude.degree_angle.raw, almanac.tiangong.next_pass.duration.second.raw, almanac.tiangong.next_pass.rise_azimuth.ordinal_compass, almanac.tiangong.next_pass.culmination_azimuth.ordinal_compass, almanac.tiangong.next_pass.set_azimuth.ordinal_compass, almanac.tiangong.next_pass.visible
                 comets = almanac.halley.az, almanac.halley.alt, almanac.halley.earth_distance, almanac.halley.mag, almanac.halley.label, almanac.halley.perihelion.unix_epoch.raw, almanac.hale_bopp.az, almanac.hale_bopp.alt, almanac.hale_bopp.earth_distance, almanac.hale_bopp.mag, almanac.hale_bopp.label, almanac.hale_bopp.perihelion.unix_epoch.raw
 ```

@@ -267,13 +267,14 @@ from loop data.  What renders depends on the almanac WeeWX has:
 
 | Almanac | The page |
 |---|---|
-| **weewx-skyfield 2.7** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
-| **weewx-skyfield 2.7**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
+| **weewx-skyfield 2.12** (satellites and comets configured) | Everything — Proxima Centauri, the sky dome, the satellite layer, the Next Visible Pass chart, the comet diamonds and the full countdown row; the footer carries the full Skyfield/DE421/Hipparcos credit |
+| **weewx-skyfield 2.12**, with neither satellites nor comets configured | The same page without the satellite layer, the Next Visible Pass chart or the comet diamonds: those follow `[Skyfield] [[Satellites]]` and `[[Comets]]`, which are weewx-skyfield's own settings, not this skin's.  The dome, the rosters' honest rows and the rest of the countdown row are all there |
 | **PyEphem** | The Geocentric minus the Proxima Centauri row (PyEphem's star catalog lacks it), the sunset and darkness chips; no dome or chart — the dome panel shows an install hint |
 | **built-in** | The page generates, but the panels show install hints — the built-in almanac serves none of the positions or distances the Celestial page runs on |
 
-**Older than 2.7 is not a tier.**  9.6 is pinned to weewx-skyfield 2.7
+**Older than 2.12 is not a tier.**  9.8 is pinned to weewx-skyfield 2.12
 and the installer refuses an older one, naming the version it found: the
+page reads a visible pass's window, which 2.12 adds; the
 sky dome and the Next Visible Pass chart are drawn for a phone as well as
 a desk and the phone drawing is 2.7's, the
 sky charts' dates and clock times read [Texts] keys 2.6.1 renamed, the
@@ -435,10 +436,20 @@ same page as desktops gets it for free.
 Which one shows is decided by **how wide the chart itself renders**, not
 by the viewport, and the width it changes at is derived from the set's
 own `label_scale`: a chart's smallest label is 10 units times that scale
-in a 680-unit frame, so it reaches the 11px floor at 935px of glass on a
-set scaled 0.8, at 623px on the default 1.2, and at 534px on one scaled
-1.4.  Each fragment carries its own figure, so setting a `label_scale`
-gets you the right switching width without computing one.
+in a 680-unit frame.  On a phone or tablet the desk drawing shows while
+that label is at least 11px, a small screen's floor: 935px of glass on a
+set scaled 0.8, 623px on the default 1.2, 534px on one scaled 1.4.  On a
+desk, with a mouse or trackpad, the floor is the 10px the charts are
+laid out for: 850px, 567px and 486px.  (A phone in landscape is as wide
+as a narrow desk window, so the device decides which floor applies, not
+the width.)  Each fragment carries its own figures, so setting a
+`label_scale` gets you the right switching widths without computing
+them.  This extension's stylesheet holds the dome and the pass chart at
+640px, so on a page that uses it a set whose switching width is over
+640px always shows the phone drawing: below about 1.17 on a phone, below
+about 1.06 on a desk;
+[Panels in your own skin](own-skin.md#the-two-drawings) says how to lift
+that cap.
 
 A narrow *label layer* is a different and older thing — a second label
 layout inside the desk drawing — and it is now useful only for widths
@@ -452,10 +463,11 @@ above that threshold, where the desk drawing is still what shows:
 ```
 
 Note what is *not* here: a `label_scale`.  The set takes the default, so
-its threshold is 623px and the 900px query sits above it.  Declaring
-`label_scale = 0.8` would move the threshold to 935px, and the layer
-would never show — below 935px this drawing is hidden and the phone one
-is shown instead.
+its threshold is 623px (567px on a desk) and the 900px query sits above
+it.  Declaring
+`label_scale = 0.8` would move the threshold to 935px (850px on a desk),
+and the layer would never show — below that this drawing is hidden and
+the phone one is shown instead.
 
 The scale reaches only the text: the star dots, markers and rings are
 drawn once, the same at every scale.

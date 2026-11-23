@@ -30,11 +30,13 @@ available.
 """
 
 import contextlib
+import email.utils
 import importlib
 import inspect
 import io
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -172,27 +174,29 @@ def load_wxskyfield():
     pytest.skip('the weewx-skyfield extension is not available')
 
 
-def as_sunlit_at_generation(html):
-    """The pass chart's featured dot as skyfield draws a satellite that is
-    SUNLIT at culmination -- the normal case for a visible pass, and the
-    one the suite's fixture (which culminates in shadow) does not cover.
+def as_shadowed_at_generation(html):
+    """The pass chart's featured dot as skyfield draws a satellite in
+    EARTH'S SHADOW at the chart's instant.  Since weewx-skyfield 2.12 the
+    chart is drawn at the visible peak, where the satellite is always
+    sunlit, so a shadowed generated dot no longer happens on a real chart;
+    this derives one, so the sweep's flip is still driven in both
+    directions.
 
-    On weewx-skyfield 2.4 the dot becomes `sky-fill-brass
-    sky-stroke-halo` and the page inverts it by exchanging the two
-    suffixes.  On 2.3.x the dot is painted with attributes and there is
-    no style block.
+    On weewx-skyfield 2.4 and later the dot is `sky-fill-<a>
+    sky-stroke-<b>` and the page inverts it by exchanging the two
+    suffixes; this does the same exchange.  On 2.3.x the dot is painted
+    with attributes and there is no style block.
 
-    This fixture CANNOT prove the exchange resolves: it derives a sunlit
-    chart from a shadowed one, so the style block keeps every role the
-    original markup used and the swapped class is always defined.  What
-    makes the exchange safe on a chart skyfield really drew is
-    `_style_block` emitting each used role's PARTNER, and that is pinned
-    against the sibling directly by
-    `test_skyfield_emits_partner_defaults`.
+    This fixture CANNOT prove the exchange resolves: it derives one look
+    from the other, so the style block keeps every role the original
+    markup used and the swapped class is always defined.  What makes the
+    exchange safe on a chart skyfield really drew is `_style_block`
+    emitting each used role's PARTNER, and that is pinned against the
+    sibling directly by `test_skyfield_emits_partner_defaults`.
     """
-    m = re.search(r'(<g class="dome-body" data-body="[^"]+" data-sunlit=")0(">)'
+    m = re.search(r'(<g class="dome-body" data-body="[^"]+" data-sunlit=")1(">)'
                   r'(<circle[^>]*>)', html)
-    assert m is not None, 'no shadowed featured dot to invert'
+    assert m is not None, 'no sunlit featured dot to invert'
     circle = m.group(3)
     cls = re.search(r'class="([^"]*)"', circle)
     if cls is not None and 'sky-fill-' in cls.group(1):
@@ -210,26 +214,53 @@ def as_sunlit_at_generation(html):
         new_circle = (circle.replace(f.group(0), 'fill="\x00"')
                             .replace(s.group(0), 'stroke="%s"' % f.group(1))
                             .replace('fill="\x00"', 'fill="%s"' % s.group(1)))
-    return html.replace(m.group(0), m.group(1) + '1' + m.group(2) + new_circle, 1)
+    return html.replace(m.group(0), m.group(1) + '0' + m.group(2) + new_circle, 1)
 
 
-def sat_feed_packets(wall, report=REPORT_NAME, satellites=True):
-    """Three loop-data files, 2 s apart, as weewx-loopdata writes them for
-    a page (under `report`'s name) with the ISS and Tiangong configured: every body's
-    az/alt/distance, the moon's phase keys and the nineteen satellite
-    keys per satellite (Tiangong's pass fields serialize as honest JSON
-    nulls), computed by whatever almanac is REGISTERED -- the caller's
-    satellites-configured weewx-skyfield -- for the fixture instants,
-    stamped with the browser's clock (`wall`) rather than the fixture's:
-    a real station's feed and the machine reading it agree on the time,
-    and a feed a year stale is one the page rightly treats as dead."""
+def epoch_leaf(v):
+    """A fake time leaf as the page reads one: pinned (.unix_epoch.raw,
+    9.10.1), the spelling every real ValueHelper answers."""
+    return types.SimpleNamespace(unix_epoch=types.SimpleNamespace(raw=v))
+
+
+def _pass_value(p, leaf):
+    """One pass field's value as loopdata serializes it: .raw for the
+    pinned-unit spellings, the compass name (str, 'N/A' when empty) for
+    .ordinal_compass, the bool for visible."""
+    if leaf == 'visible':
+        return p.visible
+    attr, _, tail = leaf.partition('.')
+    v = getattr(p, attr)
+    if tail == 'ordinal_compass':
+        return str(v.ordinal_compass())
+    return v.raw
+
+
+def sat_feed_packets(report=REPORT_NAME, satellites=True, start=TIME_TS):
+    """Three loop-data files, 2 s apart from `start`, as weewx-loopdata
+    writes them for a page (under `report`'s name) with the ISS and
+    Tiangong configured: every body's az/alt/distance, the moon's phase
+    keys and the nineteen satellite keys per satellite, computed by
+    whatever almanac is REGISTERED -- the caller's satellites-configured
+    weewx-skyfield -- for each packet's own instant, which is also its
+    stamp.  As loopdata writes them in every other way too: a None value
+    is LEFT OUT (Tiangong, honestly passless, carries no pass times at
+    all), never sent as null, and an empty compass point reads 'N/A'.
+
+    Through 9.7.2 the packets carried the browser's wall clock over
+    values computed for the fixture instant, so every fixture pass read
+    as already over -- a state production cannot reach on the page's own
+    declaration -- and Tiangong's pass fields went out as nulls
+    production never sends.  A runner that needs the page's clocks to
+    agree with these stamps runs the browser at the fixture instant
+    (page.clock) and stamps the server's Date header to match."""
     bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
               'saturn', 'uranus', 'neptune', 'proxima_centauri']
     packets = []
-    for i, ts in enumerate((TIME_TS, TIME_TS + 2, TIME_TS + 4)):
+    for i, ts in enumerate((start, start + 2, start + 4)):
         alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                     formatter=report_formatter())
-        r = {'current.dateTime.raw': wall + 2 * i,
+        r = {'current.dateTime.unix_epoch.raw': ts,
              'almanac.moon.phase': alm.moon.phase,
              'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
              'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
@@ -244,19 +275,13 @@ def sat_feed_packets(wall, report=REPORT_NAME, satellites=True):
             r['almanac.%s.alt' % s] = sat.alt
             r['almanac.%s.sunlit' % s] = sat.sunlit
             r['almanac.%s.label' % s] = str(sat.label)
-            for kind, p in (('next_visible_pass', sat.next_visible_pass),
-                            ('next_pass', sat.next_pass)):
-                base = 'almanac.%s.%s' % (s, kind)
-                r[base + '.rise.unix_epoch.raw'] = p.rise.raw
-                r[base + '.set.unix_epoch.raw'] = p.set.raw
-                r[base + '.max_altitude.degree_angle.raw'] = p.max_altitude.raw
-                r[base + '.duration.second.raw'] = p.duration.raw
-                r[base + '.rise_azimuth.ordinal_compass'] = str(p.rise_azimuth.ordinal_compass())
-                r[base + '.culmination_azimuth.ordinal_compass'] = \
-                    str(p.culmination_azimuth.ordinal_compass())
-                r[base + '.set_azimuth.ordinal_compass'] = str(p.set_azimuth.ordinal_compass())
-            r['almanac.%s.next_pass.visible' % s] = sat.next_pass.visible
-        packets.append(loop_file(r, report).encode())
+            # The pass keys are the page's own declaration, read from it.
+            for field in celestial.satellite_fields(s):
+                kind, _, leaf = field[len('almanac.%s.' % s):].partition('.')
+                if kind in ('next_pass', 'next_visible_pass'):
+                    r[field] = _pass_value(getattr(sat, kind), leaf)
+        packets.append(loop_file({k: v for k, v in r.items() if v is not None},
+                                 report).encode())
     return packets
 
 
@@ -377,7 +402,7 @@ def rewindow_pass_chart(markup, rise, sset):
 # step's arrival is recognized by the stamp changing.  The harness's
 # refresh_rate is 2 s, so one run_for(2000) fires exactly one poll.
 STEP_HELPERS = '''
-STAMP = "() => latest === null ? null : latest['current.dateTime.raw']"
+STAMP = "() => latest === null ? null : latest['current.dateTime.unix_epoch.raw']"
 def open_paused(page, url, t0):
     page.clock.install(time=t0)
     page.clock.pause_at(t0 + 0.5)
@@ -616,6 +641,216 @@ def handled(page, part, action):
     wait_xhr(page, part, n + 1)
 '''
 
+# Runner-side probe of a page's two-frame charts.  Paste into a runner's
+# source; `page.evaluate(PROBE)` answers, for the dome and the pass chart
+# (None where the page has none): the set's threshold, the script's
+# verdict, the width the fragment measures, the column it sits in, which
+# drawing shows, and the smallest label the reader sees -- each shown
+# text's font size times its drawing's scale, in pixels on the glass.
+FRAME_PROBE = '''
+PROBE = """() => {
+  const one = sel => {
+    const w = document.querySelector(sel);
+    if (w === null) return null;
+    const vis = f => { const e = w.querySelector(".cel-frame[data-frame=" + f + "]");
+      return e !== null && e.getBoundingClientRect().width > 0; };
+    let glass = null;
+    w.querySelectorAll("svg").forEach(svg => {
+      const k = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+      if (!(k > 0)) return;
+      svg.querySelectorAll("text").forEach(t => {
+        if (!(t.getBoundingClientRect().width > 0)) return;
+        const px = parseFloat(getComputedStyle(t).fontSize) * k;
+        if (glass === null || px < glass) glass = px;
+      });
+    });
+    return {at: w.getAttribute("data-frame-at"),
+            fit: w.getAttribute("data-frame-fit"),
+            box: Math.round(w.getBoundingClientRect().width),
+            col: Math.round(w.closest("#dome-wrap, #pass-wrap").getBoundingClientRect().width),
+            wide: vis("wide"), narrow: vis("narrow"), glass: glass};
+  };
+  return {dome: one(".domefrag"), pass: one(".passfrag")};
+}"""
+'''
+
+
+def assert_judged_by_drawn_width(out, kind):
+    """A 0.8 set (threshold 935px) in an 1100px window, read by
+    FRAME_PROBE on three pages: the stylesheet as shipped ('broad'), its
+    640px cap lifted ('uncapped'), and capped at half the column
+    ('half').
+
+    The width judged is the one the drawing is DRAWN at, which is why
+    each chart's cap sits on the box holding its fragment (#dome-svg,
+    #pass-chart) and never on the drawing.  Through 9.8 the dome's sat on
+    its svg: the fragment measured the whole column, over 935, while the
+    drawing stood at 640px with its smallest label at 7.5px."""
+    broad = out['broad'][kind]
+    assert broad['col'] > 935 and broad['box'] == 640, (kind, broad)
+    assert broad['fit'] == 'narrow', (kind, broad)
+    assert broad['narrow'] is True and broad['wide'] is False, (kind, broad)
+    assert broad['glass'] is not None and broad['glass'] >= 11 - 1e-6, (kind, broad)
+    # The cap lifted, the column decides again: the desk drawing, as wide
+    # as the column, its labels over the floor too.
+    uncapped = out['uncapped'][kind]
+    assert uncapped['box'] > 935, (kind, uncapped)
+    assert uncapped['fit'] == 'wide', (kind, uncapped)
+    assert uncapped['wide'] is True and uncapped['narrow'] is False, (kind, uncapped)
+    assert uncapped['glass'] is not None and uncapped['glass'] >= 11 - 1e-6, (kind, uncapped)
+    # Half of the column is under 935: narrow again.  The box must
+    # measure that half, not the shipped 640px cap, which is under 935
+    # as well and would pass every assertion after this one.
+    half = out['half'][kind]
+    assert half['col'] > 935, (kind, half)
+    assert abs(half['box'] - half['col'] / 2) <= 1, (kind, half)
+    assert half['fit'] == 'narrow' and half['narrow'] is True, (kind, half)
+
+
+# The runner for the device-rule test: one browser, a context per
+# device, each leg a resize in that context's page.  T0, BASE and the
+# STEP_HELPERS come first.
+DESK_RUNNER = '''
+READ = """() => {
+  const shown = (sel, f) => { const e = document.querySelector(
+      sel + ' .cel-frame[data-frame=' + f + ']');
+    return e !== null && e.getBoundingClientRect().width > 0; };
+  const one = sel => { const w = document.querySelector(sel);
+    if (w === null) return null;
+    let glass = null;
+    w.querySelectorAll('svg').forEach(svg => {
+      const k = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+      if (!(k > 0)) return;
+      svg.querySelectorAll('text').forEach(t => {
+        if (!(t.getBoundingClientRect().width > 0)) return;
+        const px = parseFloat(getComputedStyle(t).fontSize) * k;
+        if (glass === null || px < glass) glass = px; }); });
+    return {box: w.getBoundingClientRect().width,
+            shown: shown(sel, 'wide') && !shown(sel, 'narrow') ? 'wide'
+                 : shown(sel, 'narrow') && !shown(sel, 'wide') ? 'narrow' : 'both/none',
+            glass: glass}; };
+  const d = document.getElementById('dial');
+  return {dome: one('.domefrag'), pass: one('.passfrag'),
+          dial: d === null ? null : d.getAttribute('data-frame'),
+          dialBox: d === null ? null : d.parentNode.getBoundingClientRect().width};
+}"""
+def column(page, target):
+    # Size the window so the charts' column is TARGET px; the stacked
+    # layout's margin is measured, not assumed.
+    w = page.viewport_size['width']
+    for _ in range(8):
+        box = page.evaluate(
+            "() => document.querySelector('.domefrag').getBoundingClientRect().width")
+        if abs(box - target) < 0.5:
+            return
+        # Under the 640px cap the column cannot be read off the box, so
+        # step down until it is, then correct exactly.
+        w = int(round(w + target - box)) if box < 639 else w - 120
+        page.set_viewport_size({'width': w, 'height': 900})
+    assert abs(page.evaluate(
+        "() => document.querySelector('.domefrag').getBoundingClientRect().width")
+        - target) < 1.0, ('column', target)     # the legs sit 1.4px off the threshold
+def settle(page, want):
+    # Until the charts and the dial all say WANT.  The ceiling is a
+    # failure, not a pause: a leg that never gets there raises here,
+    # naming the frame it waited for, rather than reading a page that
+    # never settled.
+    page.wait_for_function("""w => {
+      const f = s => { const e = document.querySelector(s);
+                       return e && e.getAttribute('data-frame-fit'); };
+      const d = document.getElementById('dial');
+      return f('.domefrag') === w && f('.passfrag') === w
+             && (!d || d.getAttribute('data-frame') === w); }""",
+      arg=want, timeout=5000)
+# The page's pointer, made switchable: the change a two-in-one makes when
+# its keyboard comes off, which no browser emulation can do mid-page.
+POINTER = """(() => {
+  const real = window.matchMedia.bind(window);
+  const ls = [];
+  window.__fine = true;
+  window.matchMedia = q => q !== '(pointer: fine)' ? real(q) : {
+    media: q, get matches() { return window.__fine; },
+    addEventListener: (t, f) => ls.push(f), addListener: f => ls.push(f),
+    removeEventListener() {}, removeListener() {} };
+  window.__flipPointer = fine => {
+    window.__fine = fine; ls.forEach(f => f({matches: fine})); };
+})()"""
+out = {'errors': []}
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    def live(name, touch, path, legs, init=None):
+        ctx = b.new_context(viewport={'width': 800, 'height': 900}, has_touch=touch)
+        pg = ctx.new_page()
+        pg.on('pageerror', lambda e: out['errors'].append(name + ': ' + str(e)))
+        if init:
+            pg.add_init_script(init)
+        open_paused(pg, BASE + path, T0)
+        pg.wait_for_function('() => dialMarks !== null', timeout=10000)
+        for target, want in legs:
+            column(pg, target)
+            settle(pg, want)
+            out['%s %s' % (name, target)] = pg.evaluate(READ)
+        return ctx, pg
+    ctx, _ = live('desk', False, 'index.html', ((565, 'narrow'), (568, 'wide')))
+    ctx.close()
+    ctx, _ = live('touch', True, 'index.html', ((622, 'narrow'), (625, 'wide')))
+    ctx.close()
+    ctx, pg = live('flip', False, 'index.html', ((600, 'wide'),), init=POINTER)
+    pg.evaluate('() => window.__flipPointer(false)')
+    settle(pg, 'narrow')
+    out['flip after'] = pg.evaluate(READ)
+    ctx.close()
+    for name, touch in (('nojs desk', False), ('nojs touch', True)):
+        ctx = b.new_context(viewport={'width': 800, 'height': 900}, has_touch=touch)
+        pg = ctx.new_page()
+        pg.goto(BASE + 'nojs.html')
+        pg.wait_for_function("() => document.querySelector('.domefrag') !== null")
+        column(pg, 600)
+        out[name] = pg.evaluate(READ)
+        ctx.close()
+    b.close()
+print(json.dumps(out))
+'''
+
+# The bundled page as an almanac renders it, and the three-packet feed
+# that draws its dial: three browser tests drive the same page, and each
+# render costs seconds on a Pi, so each is made once per test process.
+# The page is keyed on what decides the render -- the almanac's instant
+# and place, and WHICH almanacs are registered (the satellite sky and the
+# plain one are different session objects) -- so a caller with another
+# sky gets its own render, never the first caller's.
+_ONCE = {}
+
+
+def sample_sat_page(alm):
+    key = ('page', alm.time_ts, alm.lat, alm.lon, alm.altitude,
+           tuple(id(a) for a in weewx.almanac.almanacs))
+    if key not in _ONCE:
+        _ONCE[key] = TestSampleSkinRenders.render(alm, sky_page=make_sky_page())
+    return _ONCE[key]
+
+
+def dial_feed():
+    if 'feed' not in _ONCE:
+        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
+                  'saturn', 'uranus', 'neptune', 'proxima_centauri']
+        packets = []
+        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
+            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=report_formatter())
+            r = {'current.dateTime.unix_epoch.raw': ts,
+                 'almanac.moon.phase': alm.moon.phase,
+                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
+                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
+            for b in bodies:
+                obj = getattr(alm, b)
+                r['almanac.%s.az' % b] = obj.az
+                r['almanac.%s.alt' % b] = obj.alt
+                r['almanac.%s.earth_distance' % b] = obj.earth_distance
+            packets.append(loop_file(r).encode())
+        _ONCE['feed'] = packets
+    return list(_ONCE['feed'])
+
 
 def load_loopdata():
     """Import the sibling weewx-loopdata checkout's module, or skip the
@@ -660,14 +895,14 @@ def wxskyfield_almanac(wxskyfield_sky):
 @pytest.fixture(scope='session')
 def wxskyfield_sat_sky():
     """A satellites-configured Sky: skyfield 2.0's archived solstice-era
-    fixture TLEs (deterministic pins: the ISS's Jun 22 03:11 PDT visible
+    fixture elements (deterministic pins: the ISS's Jun 22 03:11 PDT visible
     pass; Tiangong crosses all week but never visibly).  Skips when the
     sibling checkout's fixtures are not available."""
     mod, user_root = load_wxskyfield()
     sat_dir = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
                            'tests', 'data')
-    if not os.path.exists(os.path.join(sat_dir, 'wxskyfield_sat_25544.tle')):
-        pytest.skip('the weewx-skyfield fixture TLEs are not available')
+    if not os.path.exists(os.path.join(sat_dir, 'wxskyfield_sat_25544.csv')):
+        pytest.skip('the weewx-skyfield 2.10 fixture elements are not available')
     s = mod.Sky(user_root, load_stars=True,
                 satellites={'iss': 25544, 'tiangong': 48274}, sat_dir=sat_dir)
     assert s.is_valid()
@@ -686,7 +921,7 @@ def wxskyfield_sat_almanac(wxskyfield_sat_sky):
 
 @pytest.fixture(scope='session')
 def wxskyfield_comet_sky():
-    """A satellites-AND-comets-configured Sky: the satellite fixture TLEs
+    """A satellites-AND-comets-configured Sky: the satellite fixture elements
     plus skyfield 2.1's archived MPC rows (deterministic pins: Halley
     faint at 35.9 AU, Hale-Bopp below the horizon, C/9999 Z9 'bright' the
     fabricated always-naked-eye comet, 220P/McNaught with the 2026-06-14
@@ -698,8 +933,8 @@ def wxskyfield_comet_sky():
                             'tests', 'data')
     if not os.path.exists(os.path.join(data_dir, 'wxskyfield_comets.txt')):
         pytest.skip('the weewx-skyfield comet fixtures are not available')
-    if not os.path.exists(os.path.join(data_dir, 'wxskyfield_sat_25544.tle')):
-        pytest.skip('the weewx-skyfield fixture TLEs are not available')
+    if not os.path.exists(os.path.join(data_dir, 'wxskyfield_sat_25544.csv')):
+        pytest.skip('the weewx-skyfield 2.10 fixture elements are not available')
     try:
         s = mod.Sky(user_root, load_stars=True,
                     satellites={'iss': 25544, 'tiangong': 48274},
@@ -1059,18 +1294,20 @@ class TestSampleSkinRenders:
         assert 'Calculated with weewx-skyfield' not in html
 
     def test_renders_with_satellites(self, wxskyfield_sat_almanac):
-        """Satellites configured (the skyfield 2.0 fixture TLEs): the dome
-        panel's roster first-paints the deterministic fixture pass -- the
-        ISS's Jun 22 03:11 PDT visible pass with its appears/peaks/
-        disappears line, Tiangong's honest no-pass row -- and the Next
-        Pass chart carries the arc."""
+        """Satellites configured (the skyfield fixture elements): the
+        visible roster first-paints the deterministic fixture pass as its
+        visible WINDOW (skyfield 2.12) -- the ISS's Jun 22 pass, which
+        rises at 03:11 PDT and can be seen from 03:17:14 to 03:18:49, its
+        appears/peaks/disappears line the window's -- Tiangong's honest
+        no-pass row, and the Next Pass chart carries the arc."""
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
         assert 'id="sat-row-iss"' in html and 'id="sat-row-tiangong"' in html
         line = self.cell(html, 'sat-line-iss')
-        assert 'Jun 22, 3:11 AM' in line and 'in 15\u00a0h' in line
-        sub = self.cell(html, 'sat-pass-iss')
-        assert 'SSW' in sub and 'SE' in sub and 'ENE' in sub
-        assert '19' in sub and '10\u00a0m' in sub
+        assert line == 'Jun 22, 3:17 AM · in 15\u00a0h'
+        # The window's own figures: 95.16 s rounds to 2 minutes.
+        assert self.cell(html, 'sat-pass-iss') == \
+            'appears ESE · peaks 17° ESE · disappears E · 2\u00a0m'
+
         assert self.cell(html, 'sat-line-tiangong') == 'no visible pass in the coming week'
         assert self.cell(html, 'sat-pass-tiangong') == ''
         # The dome-side roster: the next pass of ANY kind, tagged from
@@ -1107,9 +1344,9 @@ class TestSampleSkinRenders:
         assert '<span class="passname">Iss</span>' in html
         when = re.search(r'passwhen mono">([^<]*)<', html)
         assert when is not None
-        assert 'Jun 22' in when.group(1)
-        assert '3:11 AM' in when.group(1) and '3:21 AM' in when.group(1)
-        assert '19' in when.group(1)
+        # skyfield 2.12's head line names the visible window, not the
+        # horizon-to-horizon pass.
+        assert when.group(1) == 'Sun, Jun 22 · 3:17 AM → 3:18 AM · peak 17°'
         # Both panels carry their own gradient and clip ids: the pass
         # chart's skygp/domecp and the dome's skyg/domec.  weewx-skyfield
         # 2.4 suffixes them with the plate name (skyg-night,
@@ -1130,8 +1367,9 @@ class TestSampleSkinRenders:
         Terrettaz's report against weewx-skyfield's countdown chips, the
         2026-08-12 partial solar eclipse, issue #6), and rounding down
         calls one 32 hours out "in 1 day" when it falls the day after.
-        The fixture's Jun 21 03:59 PDT visible pass is both boundaries,
-        seen from two different mornings."""
+        The fixture's Jun 21 visible pass (rising at 03:59 PDT, visible
+        from 04:03:54) is both boundaries, seen from two different
+        mornings."""
         mod, _ = load_wxskyfield()
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
@@ -1140,24 +1378,24 @@ class TestSampleSkinRenders:
                 alm = weewx.almanac.Almanac(now_ts, LATITUDE, LONGITUDE,
                                             altitude=ALTITUDE_M,
                                             formatter=report_formatter())
-                rise = alm.iss.next_visible_pass.rise.raw
-                assert abs(rise - 1750503568) < 1, 'fixture pass moved'
+                start = alm.iss.next_visible_pass.visible_start.raw
+                assert abs(start - 1750503834) < 1, 'fixture pass moved'
                 return self.cell(self.render(alm, sky_page=make_sky_page()), 'sat-line-iss')
 
             # Jun 20 02:00 PDT: the pass is 26 hours out and TOMORROW.
             tomorrow = line(1750410000)
-            assert 'Jun 21, 3:59 AM' in tomorrow
+            assert 'Jun 21, 4:03 AM' in tomorrow
             assert 'in 1 day' in tomorrow
             # Jun 19 20:00 PDT: 32 hours out, and the day after tomorrow.
             two_days = line(1750388400)
-            assert 'Jun 21, 3:59 AM' in two_days
+            assert 'Jun 21, 4:03 AM' in two_days
             assert 'in 2 days' in two_days
             # Under a day the row keeps its finer elapsed-time resolution:
             # that is what a go-watch reader wants, whichever side of
             # midnight the pass falls on.
             # 15.6 h out: every rung FLOORS (skyfield's _sat_when), so this
             # is "in 15 h", not the 16 that rounding gave.
-            assert 'in 15\u00a0h' in line(1750446000)     # Jun 20 12:00 PDT
+            assert 'in 15\u00a0h' in line(1750503834 - 56160)     # Jun 20 12:27 PDT
 
     def test_renders_with_comets(self, wxskyfield_comet_almanac):
         """Comets configured (the skyfield 2.1 fixture MPC rows): the
@@ -1367,7 +1605,7 @@ class TestSampleSkinRenders:
         """theme = light is the WHOLE page: the class the stylesheet's
         light plate hangs on, and the embedded dome rendered on
         skyfield's matching paper palette.  A night dome inside a light
-        page (the Tempestas shape, correct there) is the one outcome
+        page (a consuming skin's shape, correct there) is the one outcome
         this page must never produce, so the night plate's own gradient
         stop is asserted ABSENT rather than the paper one merely
         present."""
@@ -1615,7 +1853,7 @@ class TestSampleSkinRenders:
         does -- and the walk, which clamps to count - 1, could never ask
         for it, so the last 50 s of every cycle showed the slot before.
         Declared == emitted, and the last slot askable, on intervals that
-        do NOT divide: neither this repo nor liveseasons had such a
+        do NOT divide: neither this repo nor its consuming skin had such a
         station, which is how it survived four review rounds."""
         def emitted(seconds):
             """The slots this interval actually writes, and what each one
@@ -1978,7 +2216,7 @@ class TestSampleSkinRenders:
         shown twice).  The one-second tick survives for extrapolated
         MOTION -- the dial's bodies, the dome's marks, the pass chart's
         sweep, each on packetAge -- and for elapsed-time housekeeping.
-        Same rule, same survivors as weewx-liveseasons 8.4.4.
+        Same rule, same survivors as the consuming skin's own port.
 
         Structural rather than a browser run on purpose: the rule is
         about which names appear where.  The rendered-value half (GEN_TS
@@ -2134,7 +2372,7 @@ class TestSampleSkinRenders:
         # than adopt such a record silently.)
         assert re.search(r"if \(typeof lastTs !== 'number'\) \{", src)
         assert re.search(r'console\.log\(.loop record has no '
-                         r'current\.dateTime\.raw; ignored.\)', src)
+                         r'current\.dateTime\.unix_epoch\.raw; ignored.\)', src)
         # The LIVE badge's age is read from the SERVER's clock -- the Date
         # header on the response that carried the record, against the
         # record's own station time -- with the two same-clock terms as
@@ -2185,11 +2423,16 @@ class TestSampleSkinRenders:
                         r'data-page-theme="dark"></div>$', out.strip())
 
     def test_javascript_reads_only_the_field_set(self):
-        """The javascript's loop-data keys, expanded the way the include
-        builds them (a per-body prefix plus .az/.alt/.earth_distance, and
-        the literal moon-phase and dateTime keys), must equal
-        PAGE_FIELDS exactly -- the skin consumes the whole
-        page field set and nothing else."""
+        """The keys the script reads for its live values, expanded the way
+        the script builds them (a per-body prefix plus .az/.alt/
+        .earth_distance, the literal moon-phase, clock and event keys
+        listed here), must equal PAGE_FIELDS exactly: every declared field
+        is read and every read field is declared -- one declared key,
+        one read (9.10.1), with no fallback spellings anywhere in the
+        script; the retired ones are banned by name below.  This test
+        does not enumerate the script's reads, so a stray new read is
+        caught only by its key being missing from this list or by that
+        ban."""
         include = open(JS_PATH).read()
         page_py = open(PAGE_PY, encoding='utf-8').read()
         m = re.search(r'var GEO_BODIES = \[(.*?)\];', include, re.DOTALL)
@@ -2206,7 +2449,7 @@ class TestSampleSkinRenders:
         # parenthesized horizon spelling, byte-exact with the fields
         # line), the shower peak/label pair, the supermoon and the
         # eclipse trio.
-        for literal in ('current.dateTime.raw', 'almanac.moon.phase',
+        for literal in ('current.dateTime.unix_epoch.raw', 'almanac.moon.phase',
                         'almanac.next_full_moon.unix_epoch.raw',
                         'almanac.next_new_moon.unix_epoch.raw',
                         'almanac.sun.next_setting.unix_epoch.raw',
@@ -2238,33 +2481,48 @@ class TestSampleSkinRenders:
         # [[Satellites]] entries take the same suffix set by hand -- the
         # README documents the pattern.
         assert 'satellite_names()' in page_py
-        # Per satellite, the javascript reads two pass chains through one
-        # row renderer (renderPassRow composes base + attribute): the
-        # chart-side next_visible_pass and the dome-side next_pass, the
-        # latter adding its visible bool for the row's tag.  The base and
+        # Per satellite, the javascript reads two pass chains through two
+        # row renderers, each composing base + attribute: the visible
+        # roster and the chip read next_visible_pass's WINDOW
+        # (renderWindowRow, skyfield 2.12), the dome's roster reads the
+        # geometric next_pass and, for its tag, the pass's visible bool
+        # beside that window (renderPassRow, passVisibleNow).  The
         # attribute literals must each appear in the include -- the
-        # composition the test mirrors here.
+        # composition the test mirrors here -- and each base with them.
         sats = ['iss', 'tiangong']
-        PASS_BASES = ('.next_pass', '.next_visible_pass')
-        PASS_ATTRS = (
-            '.rise.unix_epoch.raw',
-            '.set.unix_epoch.raw',
-            '.max_altitude.degree_angle.raw',
-            '.duration.second.raw',
-            '.rise_azimuth.ordinal_compass',
-            '.culmination_azimuth.ordinal_compass',
-            '.set_azimuth.ordinal_compass',
-        )
-        for literal in (('.az', '.alt', '.sunlit', '.label', '.visible')
-                        + PASS_BASES + PASS_ATTRS):
+        PASS_CHAINS = {
+            '.next_visible_pass': (
+                '.visible_start.unix_epoch.raw',
+                '.visible_end.unix_epoch.raw',
+                '.visible_peak_altitude.degree_angle.raw',
+                '.visible_duration.second.raw',
+                '.visible_start_azimuth.ordinal_compass',
+                '.visible_peak_azimuth.ordinal_compass',
+                '.visible_end_azimuth.ordinal_compass',
+            ),
+            '.next_pass': (
+                '.rise.unix_epoch.raw',
+                '.set.unix_epoch.raw',
+                '.max_altitude.degree_angle.raw',
+                '.duration.second.raw',
+                '.rise_azimuth.ordinal_compass',
+                '.culmination_azimuth.ordinal_compass',
+                '.set_azimuth.ordinal_compass',
+                '.visible',
+            ),
+        }
+        for chain, attrs in PASS_CHAINS.items():
+            assert "'%s'" % chain in include, chain
+            for literal in attrs:
+                assert "'%s'" % literal in include, literal
+        for literal in ('.az', '.alt', '.sunlit', '.label'):
             assert "'%s'" % literal in include, literal
         for sat in sats:
             for suffix in ('.az', '.alt', '.sunlit', '.label'):
                 keys.add('almanac.%s%s' % (sat, suffix))
-            for base in PASS_BASES:
-                for attr in PASS_ATTRS:
-                    keys.add('almanac.%s%s%s' % (sat, base, attr))
-            keys.add('almanac.%s.next_pass.visible' % sat)
+            for chain, attrs in PASS_CHAINS.items():
+                for attr in attrs:
+                    keys.add('almanac.%s%s%s' % (sat, chain, attr))
         # The comet layer is dynamic the same way: COMET_NAMES from
         # skyfield 2.1's public comet_names(), the per-comet keys
         # composed from the suffix set below.  PAGE_FIELDS
@@ -2279,16 +2537,20 @@ class TestSampleSkinRenders:
                            '.perihelion.unix_epoch.raw'):
                 keys.add('almanac.%s%s' % (comet, suffix))
         assert keys == set(celestial.PAGE_FIELDS)
-        # The pre-7.6 unpinned moon keys survive as read fallbacks, and
-        # the pass times, duration and peak altitude keep bare-.raw
-        # fallbacks likewise: the skin's own declaration is pinned, but a
-        # group of your own in the report's stanza that overrides one of
-        # the skin's with the bare spellings still drives the page.
-        for legacy in ('almanac.next_full_moon.raw', 'almanac.next_new_moon.raw'):
-            assert "'%s'" % legacy in include or '"%s"' % legacy in include, legacy
-        for legacy_attr in ('.rise.raw', '.set.raw',
-                            '.max_altitude.raw', '.duration.raw'):
-            assert "'%s'" % legacy_attr in include, legacy_attr
+        # THE RETIRED SPELLINGS ARE BANNED (9.10.1): the unpinned clock
+        # key, the pre-7.6 moon keys and the bare .raw pass times, peak
+        # and duration were read as fallbacks through 9.10, for a group
+        # of your own declared with the unpinned spellings -- values that
+        # follow the report's group_time, which is exactly what the pins
+        # keep off the page.  One declared key, one read.  A source pin is
+        # the right form for a ban on a retired name: the browser leg
+        # that would catch a re-added fallback skips without the pwenv.
+        for retired in ('current.dateTime.raw',
+                        'almanac.next_full_moon.raw', 'almanac.next_new_moon.raw',
+                        '.rise.raw', '.set.raw', '.max_altitude.raw', '.duration.raw'):
+            assert "'%s'" % retired not in include, retired
+            assert '"%s"' % retired not in include, retired
+        assert 'numOr' not in include, 'the fallback reader is retired with its spellings'
 
     def test_no_window_global_collisions(self):
         """Through 8.5 the script ran at window scope, and `var history`
@@ -2340,7 +2602,6 @@ class TestSampleSkinRenders:
         non-browser harness, because only a browser predefines
         window.history).  Skips when the playwright env is absent."""
         import http.server
-        import re as relib
         import json as jsonlib
         import socketserver
         import subprocess
@@ -2353,26 +2614,25 @@ class TestSampleSkinRenders:
 
         # Three packets, 2 s apart, computed by the same registered
         # almanac the page rendered from (the fixture keeps it registered
-        # for the duration of this test).
-        # The packets carry the BROWSER's clock, not the fixture's, while
-        # their astronomy stays the fixture's.  A real station's feed and
-        # the machine reading it agree on the time; this harness would
-        # otherwise present a feed a year stale, and the page treats a
-        # feed more than EXTRAP_MAX behind as dead -- correctly -- and
-        # puts the dome's marks back where the backdrop drew them.  The
-        # embedded backdrop is restamped below for the same reason.
-        wall = int(time.time())
-        packets = sat_feed_packets(wall)
+        # for the duration of this test), each stamped with its own
+        # instant -- the fixture's, as loopdata would.  The browser runs at
+        # that instant too (page.clock) and the server's Date header says
+        # it, so the page's three clocks agree as a station's do: the
+        # station's (the packet stamp), the browser's and the web
+        # server's.
+        packets = sat_feed_packets()
 
         html = self.render(wxskyfield_sat_almanac, sky_page=make_sky_page())
-        html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % wall,
-                         html, count=1)
         (tmp_path / 'index.html').write_text(html)
         write_assets(tmp_path)
 
         served = {'n': 0}
 
         class Handler(http.server.SimpleHTTPRequestHandler):
+            def date_time_string(self, timestamp=None):
+                return email.utils.formatdate(TIME_TS + 2 * min(served['n'], 2),
+                                              usegmt=True)
+
             def do_GET(self):
                 if self.path.startswith('/gauge-data/loop-data.txt'):
                     body = packets[min(served['n'], len(packets) - 1)]
@@ -2405,6 +2665,7 @@ class TestSampleSkinRenders:
             '    page = browser.new_page()\n'
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            '    page.clock.install(time=%d)\n'
             "    page.goto('http://127.0.0.1:%d/index.html')\n"
             '    # Until the page has shown everything read below: a rate\n'
             '    # line and the trails need a second packet, the dome nudge\n'
@@ -2455,7 +2716,7 @@ class TestSampleSkinRenders:
             "            \"  ([s, p]) => getComputedStyle(document.querySelector(s))[p])\"),\n"
             '    }\n'
             '    browser.close()\n'
-            'print(json.dumps(out))\n' % port)
+            'print(json.dumps(out))\n' % (TIME_TS, port))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
                                   text=True, timeout=120)
@@ -2476,30 +2737,19 @@ class TestSampleSkinRenders:
         assert out['dome'] == 2        # the wide drawing and the narrow one
         assert out['nudged'] >= 1
         assert out['satdots'] == 0
-        assert 'Jun 22' in out['satline']
-        # The fixture pass is behind the browser's real clock, so this row
-        # sits in the window between a pass's set and the feed's next_pass
-        # rollover: satWhen must say "just set", never clamp the negative
-        # countdown to "in 1 m".
-        assert 'just set' in out['satline']
-        assert 'in 1\u00a0m' not in out['satline']
-        # The Next Visible Pass chart came up (the fixture ISS pass is tomorrow
-        # morning, June 2025) and its featured dot was NOT swept.  Judged
-        # by the chart's OWN data-rise/data-set against the browser's real
-        # clock that pass is long over, so the dot is hidden -- the
-        # load-after-set case, a page opened after the pass ended and
-        # before the next chart arrived, which 8.3.3 fixes by reading the
-        # chart's window rather than remembering whether it swept.
+        # The visible roster counts to the ISS's visible WINDOW (skyfield
+        # 2.12), which opens tomorrow at 03:17:14, 15 h 17 m after the
+        # fixture noon: the hour rung floors.
+        assert out['satline'] == 'Jun 22, 3:17 AM \u00b7 in 15\u00a0h', out['satline']
+        # The Next Visible Pass chart came up (the fixture ISS pass is
+        # tomorrow morning) and its featured dot was NOT swept: the pass
+        # has not risen, so the chart stands as drawn, dot included.  (A
+        # page opened after a pass ended is test_pass_sweep_dot_hides_
+        # when_the_pass_ends_in_a_real_browser's.)
         assert out['passchart'] == 2       # the wide drawing and the narrow one
-        assert '3:11 AM' in out['passwhen']
+        assert '3:17 AM' in out['passwhen']
         assert out['passnudged'] == 0
-        if re.search(r'<g class="dome-track"[^>]* data-set="\d+"', html):
-            assert out['passdot'] == 'none'
-        else:
-            # A pre-2.3.2 skyfield's chart states no window: the feed's
-            # governs, and it too is long past, so the chart stands as
-            # drawn -- the documented fallback.
-            assert out['passdot'] is None
+        assert out['passdot'] is None
         # The dome-side any-pass roster went live: the ISS's next
         # crossing is the fixture's daytime Jun 21 pass, tagged not
         # visible.
@@ -2517,6 +2767,269 @@ class TestSampleSkinRenders:
         # --page-divider, and a chip -- a box -- still on --line.
         assert out['dividers'] == ['rgb(103, 111, 144)'] * 2 + ['rgb(72, 81, 116)'] * 2 + [
             'rgb(42, 51, 88)'], out['dividers']
+
+    def test_the_visible_window_drives_the_rosters_and_chip_in_a_real_browser(
+            self, wxskyfield_sat_sky, tmp_path):
+        """skyfield 2.12's visible window, through loopdata-shaped packets
+        each computed for its own stamp, on one open page stepped a poll
+        at a time from 03:05 PDT Jun 22, six minutes before the fixture
+        ISS pass rises:
+        - the dome's tag: "visible" before rise (a pass to come that will
+          be), "not visible" from rise to the window (in shadow),
+          "visible" inside it, "not visible" after it though the pass is
+          still overhead;
+        - the chip: "appears in" to the window's start, "overhead now"
+          inside, and at the window's end straight on to the next window,
+          never "just set";
+        - a report whose declaration holds the group until set (the window
+          closed, the fields not rolled): the chip names the other
+          satellite's window rather than blanking, and the visible roster
+          prints the closed window's date and time with no countdown;
+        - an absent window on a satellite in the feed is NO pass, not
+          "keep the first paint";
+        - the sub-line rounds half to even (a 150 s window is 2 m, a
+          17.5 degree peak 18, Python's rule and skyfield's) and escapes
+          a compass name; a visible pass with no window keys is tagged
+          from its bool.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        mod, _ = load_wxskyfield()
+        T0 = TIME_TS + 15 * 3600 + 5 * 60            # Jun 22 03:05 PDT
+        END_A = 1750587529.305                         # pass A's window ends
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            alm = weewx.almanac.Almanac(T0, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=report_formatter())
+            html = self.render(alm, sky_page=make_sky_page())
+
+            def at(ts):
+                return jsonlib.loads(sat_feed_packets(start=ts)[0])[REPORT_NAME]
+            before_rise = at(T0)
+            in_shadow = at(T0 + 9 * 60)                # 03:14, risen at 03:11:25
+            inside = at(T0 + 13 * 60)                  # 03:18, the window open
+            closed = at(int(math.ceil(END_A)))         # the first stamp past it
+        nv = 'almanac.iss.next_visible_pass.'
+        window_keys = [k for k in inside if k.startswith(nv)]
+        # The group held until set: pass A's window on a later stamp, and a
+        # Tiangong window still to come.
+        held = dict(closed, **{k: inside[k] for k in window_keys})
+        held['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 2
+        tg = 'almanac.tiangong.next_visible_pass.'
+        held.update({tg + 'visible_start.unix_epoch.raw': END_A + 3600,
+                     tg + 'visible_end.unix_epoch.raw': END_A + 3700,
+                     tg + 'visible_peak_altitude.degree_angle.raw': 30.0,
+                     tg + 'visible_duration.second.raw': 100.0})
+        # No window for the ISS, as loopdata sends it: the times and
+        # figures absent, the three compass points 'N/A'.
+        absent = {k: v for k, v in closed.items()
+                  if not k.startswith(nv) or k.endswith('.ordinal_compass')}
+        absent.update({k: 'N/A' for k in absent if k.startswith(nv)})
+        assert len([k for k in absent if k.startswith(nv)]) == 3
+        absent['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 4
+        # Exact halves and a compass name that is markup.
+        odd = dict(closed)
+        odd['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 6
+        odd[nv + 'visible_duration.second.raw'] = 150.0
+        odd[nv + 'visible_peak_altitude.degree_angle.raw'] = 17.5
+        odd[nv + 'visible_start_azimuth.ordinal_compass'] = 'E<b>'
+        assert odd['almanac.iss.next_pass.visible'] is True
+        # A weewx.conf still declaring 9.7.2's fields: the window chains
+        # carry rise and set, no compass points of the window -- NOT
+        # declared, so the rows and the chip stand as they were.
+        old = {k: v for k, v in closed.items() if '.next_visible_pass.' not in k}
+        old['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 10
+        for sat in ('iss', 'tiangong'):
+            old['almanac.%s.next_visible_pass.rise.unix_epoch.raw' % sat] = END_A + 7200
+            old['almanac.%s.next_visible_pass.set.unix_epoch.raw' % sat] = END_A + 7800
+        # Elements gone stale mid-session: no position, no sunlit flag, no
+        # times -- the compass points still 'N/A'.
+        stale = {k: v for k, v in absent.items()
+                 if not k.startswith(('almanac.iss.az', 'almanac.iss.alt', 'almanac.iss.sunlit'))}
+        stale['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 12
+        # The next window, one figure missing, right after a full sub-line:
+        # that sub-line must not stay under it.
+        partial = dict(closed)
+        partial['current.dateTime.unix_epoch.raw'] = closed['current.dateTime.unix_epoch.raw'] + 8
+        del partial[nv + 'visible_peak_altitude.degree_angle.raw']
+        records = [before_rise, in_shadow, inside, closed, held, absent, odd, partial,
+                   old, stale]
+        packets = [loop_file(r).encode() for r in records]
+
+        # The chip baked with a start and NO end: when the window chains
+        # leave the feed (the 9.7.2 field list below), the static path
+        # must read it as an open window, as the first paint does.
+        html, n = re.subn(r'(id="chip-pass" data-ts="\d+") data-set="\d+"', r'\1', html)
+        assert n == 1
+        (tmp_path / 'index.html').write_text(html)
+        write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        # The last step: the RETIRED spellings run through the page.  A
+        # record carrying the ISS pass and the moon instants under the
+        # bare .raw keys only (a group of a consumer's own, declared with
+        # the unpinned spellings) must read as NO pass and as the default
+        # phase -- one declared key, one read (9.10.1); through 9.10 both
+        # were taken as fallbacks.  The moon is judged by the lit path the
+        # disc draws: the unpinned waning order must equal NO moon keys,
+        # and the pinned waning order must differ (so the instrument can
+        # tell).  The pass row is judged by its text.
+        retired_js = r'''RETIRED = """(rec) => {
+  const lit = () => document.querySelector('#dial .cel-moon-lit').getAttribute('d');
+  const r = Object.assign({}, rec);
+  const t = r['current.dateTime.unix_epoch.raw'];
+  Object.keys(r).forEach(k => {
+    if (k.indexOf('almanac.iss.next_pass.') === 0
+        && /\.(unix_epoch|degree_angle|second)\.raw$/.test(k)) { delete r[k]; }
+  });
+  r['almanac.iss.next_pass.rise.raw'] = t + 600;
+  r['almanac.iss.next_pass.set.raw'] = t + 1200;
+  r['almanac.iss.next_pass.max_altitude.raw'] = 40;
+  r['almanac.iss.next_pass.duration.raw'] = 600;
+  delete r['almanac.next_full_moon.unix_epoch.raw'];
+  delete r['almanac.next_new_moon.unix_epoch.raw'];
+  r['almanac.next_full_moon.raw'] = t + 20 * 86400;
+  r['almanac.next_new_moon.raw'] = t + 5 * 86400;
+  latest = r; latestTs = t;
+  renderPassRow('iss', true, t);
+  renderGeo();
+  const unpinned = lit();
+  delete r['almanac.next_full_moon.raw'];
+  delete r['almanac.next_new_moon.raw'];
+  renderGeo();
+  const none = lit();
+  r['almanac.next_full_moon.unix_epoch.raw'] = t + 20 * 86400;
+  r['almanac.next_new_moon.unix_epoch.raw'] = t + 5 * 86400;
+  renderGeo();
+  const waning = lit();
+  return {anyline: document.getElementById('sat-any-line-iss').textContent,
+          anysub: document.getElementById('sat-any-pass-iss').textContent,
+          unpinned: unpinned, none: none, waning: waning};
+}"""
+'''
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS + retired_js +
+            'RECORD = json.loads(%(record)r)[%(report)r]\n'
+            'READ = """() => ({\n'
+            "  line: document.getElementById('sat-line-iss').textContent,\n"
+            "  sub: document.getElementById('sat-pass-iss').textContent,\n"
+            "  anyline: document.getElementById('sat-any-line-iss').textContent,\n"
+            "  anysub: document.getElementById('sat-any-pass-iss').textContent,\n"
+            "  chip: document.getElementById('chip-pass').hidden,\n"
+            "  k: document.getElementById('chip-pass-k').textContent,\n"
+            "  d: document.getElementById('chip-pass-d').textContent,\n"
+            "  v: document.getElementById('chip-pass-v').textContent})\"\"\"\n"
+            'with sync_playwright() as p:\n'
+            '    browser = p.chromium.launch()\n'
+            '    page = browser.new_page()\n'
+            '    errors = []\n'
+            "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(t0)d)\n"
+            '    states = [page.evaluate(READ)]\n'
+            '    for _ in range(%(more)d):\n'
+            '        step(page)\n'
+            '        states.append(page.evaluate(READ))\n'
+            '    retired = page.evaluate(RETIRED, RECORD)\n'
+            "    print(json.dumps({'errors': errors, 'states': states, 'retired': retired}))\n"
+            '    browser.close()\n'
+            % {'port': port, 't0': T0, 'more': len(packets) - 1,
+               'record': packets[0].decode(), 'report': REPORT_NAME})
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True,
+                                  text=True, timeout=120)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == []
+        s0, s1, s2, s3, s4, s5, s6, s7, s8, s9 = out['states']
+        partial_s, old_s, stale_s = s7, s8, s9
+        vis, notvis = ' \u00b7 visible', ' \u00b7 not visible'
+        # 03:05: a pass to come, visible; the chip counts to the WINDOW.
+        assert s0['anysub'].endswith(vis), s0
+        assert s0['line'] == 'Jun 22, 3:17 AM \u00b7 in 12\u00a0m', s0
+        assert (s0['chip'], s0['k'], s0['d']) == (False, 'Iss', 'appears in'), s0
+        # 03:14: risen, in shadow: overhead, NOT visible, still to appear.
+        assert 'overhead now' in s1['anyline'] and s1['anysub'].endswith(notvis), s1
+        assert s1['d'] == 'appears in', s1
+        # 03:18: inside the window.
+        assert s2['anysub'].endswith(vis), s2
+        assert 'overhead now' in s2['line'] and s2['d'] == 'overhead now', s2
+        # The first stamp past the window: the feed already names the next
+        # window, the chip counts to it, and the dome's row -- the same
+        # pass, still overhead -- says it can no longer be seen.
+        assert 'overhead now' in s3['anyline'] and s3['anysub'].endswith(notvis), s3
+        assert s3['d'] == 'appears in' and s3['k'] == 'Iss', s3
+        assert '3:17 AM' not in s3['line'], s3
+        # The group held until set: pass A's closed window stands in the
+        # feed.  The chip moves to Tiangong; the roster prints the closed
+        # window bare.
+        assert (s4['chip'], s4['k'], s4['d']) == (False, 'Tiangong', 'appears in'), s4
+        assert s4['line'] == 'Jun 22, 3:17 AM', s4
+        # No window keys for the ISS: no visible pass, and with Tiangong's
+        # honest none, no chip.
+        assert s5['line'] == 'no visible pass in the coming week', s5
+        assert s5['sub'] == '' and s5['chip'] is True, s5
+        # Halves to even and the markup escaped (shown as text).
+        assert s6['sub'].startswith('appears E<b> \u00b7 peaks 18\u00b0 '), s6
+        assert s6['sub'].endswith('2\u00a0m'), s6
+        # A figure missing from the window: the sub-line before it (s6's,
+        # full) goes rather than stand under it.
+        assert s6['sub'] != '' and partial_s['line'] == s3['line'], partial_s
+        assert partial_s['sub'] == '', partial_s
+        # 9.7.2's field list: not declared, so the visible roster stands
+        # exactly as the last packet left it, and the dome's tag falls
+        # back to the pass's bool -- it is still pass A, visible.
+        assert (old_s['line'], old_s['sub']) == (partial_s['line'], partial_s['sub']), old_s
+        assert old_s['anysub'].endswith(vis), old_s
+        # ... and the chip, with no window chain in the feed, counts from
+        # its bake: begun, no end baked, so open.
+        assert (old_s['chip'], old_s['d']) == (False, 'overhead now'), old_s
+        # Stale elements: said so, not a pass computed before.
+        assert stale_s['line'] == 'no usable orbital elements \u2014 see the weewxd log', stale_s
+        assert stale_s['sub'] == '', stale_s
+        for st in out['states']:
+            assert st['d'] != 'just set', st
+        # The retired spellings: no pass, default phase (see RETIRED).
+        retired = out['retired']
+        assert retired['anyline'] == 'no pass in the coming week', retired
+        assert retired['anysub'] == '', retired
+        assert retired['unpinned'] == retired['none'], retired
+        assert retired['waning'] != retired['none'], 'the moon instrument cannot tell'
 
     def test_pass_countdown_day_count_in_a_real_browser(self, wxskyfield_almanac,
                                                         tmp_path):
@@ -2821,7 +3334,7 @@ class TestSampleSkinRenders:
         # packet derives no rates, so the title holds exactly these values.
         (tmp_path / 'gauge-data').mkdir()
         (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(loop_file({
-            'current.dateTime.raw': PACKET_TS,
+            'current.dateTime.unix_epoch.raw': PACKET_TS,
             'almanac.mars.az': 120.0,
             'almanac.mars.alt': 30.0,
             'almanac.mars.earth_distance': 1.66}))
@@ -2998,23 +3511,21 @@ class TestSampleSkinRenders:
         # data-set): the sweep runs only inside it, so it is put around
         # the browser's clock like the feed's window below.
         html = rewindow_pass_chart(html, now - 60, now + 600)
-        if gen_lit:
-            # The fixture culminates in SHADOW, so its swap lands on role
-            # classes the chart already used -- the one direction that
-            # cannot expose a missing default.  A visible pass is
-            # normally sunlit at culmination; this leg builds that chart
-            # the way skyfield builds it, pruned rules and all.
-            html = as_sunlit_at_generation(html)
+        if not gen_lit:
+            # skyfield 2.12 draws the chart at the visible peak, so the
+            # generated dot is always SUNLIT, as on a real chart; this leg
+            # derives the shadowed look, so the flip is driven both ways.
+            html = as_shadowed_at_generation(html)
         (tmp_path / 'index.html').write_text(html)
         write_assets(tmp_path, unwrapped=True)   # the runner steps the clock
 
         # The generated look, straight from the rendered chart (the only
         # data-sunlit iss group on the page: the ISS is below the horizon
         # at the fixture instant, so the dome draws no marker for it).
-        # The fixture pass CULMINATES IN SHADOW -- visible at its ends,
-        # ringed at its peak: the NOAA-21 shape of the ship-review finding
-        # exactly, so the generated dot is the ring and the live-sunlit
-        # phases below flip it solid.
+        # The fixture pass culminates in shadow, the NOAA-21 shape of the
+        # ship-review finding, but skyfield 2.12 draws the chart at the
+        # visible peak, where it is sunlit; the live-shadow phases below
+        # flip it to the ring and back.
         m = relib.search(r'<g class="dome-body" data-body="iss" data-sunlit="(\d)">'
                          r'<circle([^>]*)>', html)
         assert m is not None
@@ -3036,14 +3547,14 @@ class TestSampleSkinRenders:
 
         def packet(i, sunlit):
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0 + 0.1 * i,
                 'almanac.iss.sunlit': sunlit,
                 'almanac.iss.label': 'ISS',
-                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now - 60,
-                'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 600,
+                'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw': now - 30,
+                'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw': now + 400,
             }).encode()
         served = {'n': 0}
 
@@ -3211,18 +3722,20 @@ class TestSampleSkinRenders:
             # steps its clock a poll at a time, so this is its time.
             i = state['n']
             now = t0 + 2 * i
-            rolled = now >= chart_set
+            # The feed's window rolls at its END, before the set (skyfield
+            # 2.12); the chart's own window is the whole pass.
+            rolled = now >= chart_set - 60
             return loop_file({
-                'current.dateTime.raw': now,
+                'current.dateTime.unix_epoch.raw': now,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0 - 0.5 * i,
                 'almanac.iss.sunlit': True,
                 'almanac.iss.label': 'ISS',
-                'almanac.iss.next_visible_pass.rise.unix_epoch.raw':
-                    chart_rise + (3600 if rolled else 0),
-                'almanac.iss.next_visible_pass.set.unix_epoch.raw':
-                    chart_set + (3600 if rolled else 0),
+                'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw':
+                    chart_rise + 30 + (3600 if rolled else 0),
+                'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw':
+                    chart_set - 60 + (3600 if rolled else 0),
             }).encode()
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -3301,7 +3814,7 @@ class TestSampleSkinRenders:
             "    # handler; the roll's arrival is awaited below).\n"
             '    step_until(page, HIDDEN, 15)\n'
             '    step_until(page, """() => latest !== null &&\n'
-            "      latest['almanac.iss.next_visible_pass.rise.unix_epoch.raw'] > \"\"\" + str(CHART_SET), 4)\n"
+            "      latest['almanac.iss.next_visible_pass.visible_start.unix_epoch.raw'] > \"\"\" + str(CHART_SET), 4)\n"
             '    step(page)                       # two localTicks after the roll\n'
             '    # Past the set, renderPass hides the mark on every tick:\n'
             '    # hiding what is already hidden must write NOTHING.\n'
@@ -3366,8 +3879,8 @@ class TestSampleSkinRenders:
         so on every one-second tick, rewriting the same attributes to the
         same values for hours on a chart nothing had touched.  8.3.5 put
         the asDrawn latch in front of that; 8.4 pins it, because the
-        fix had no test of its own on this side (liveseasons measured it,
-        celestial took it on trust).
+        fix had no test of its own on this side (a consuming skin measured
+        it, celestial took it on trust).
 
         The chart's window is moved an hour ahead of the page's clock, a
         packet lands so renderPass runs at all, and every attribute write
@@ -3398,7 +3911,7 @@ class TestSampleSkinRenders:
         # the page's clock still, which is the state the latch is for.
         (tmp_path / 'gauge-data').mkdir()
         (tmp_path / 'gauge-data' / 'loop-data.txt').write_text(loop_file({
-            'current.dateTime.raw': PACKET_TS,
+            'current.dateTime.unix_epoch.raw': PACKET_TS,
             'almanac.iss.az': 120.0,
             'almanac.iss.alt': 45.0,
             'almanac.iss.sunlit': True,
@@ -3480,17 +3993,18 @@ class TestSampleSkinRenders:
         # whole stretch before the pass -- hours, on a real station.
         assert out['muts'] == 0, out['muts']
 
-    def test_pass_chart_without_its_own_window_falls_back_to_the_feed_in_a_real_browser(
+    def test_pass_chart_without_its_own_window_stands_as_drawn_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
-        """An older weewx-skyfield's chart carries no data-rise/data-set;
-        renderPass then judges the chart against the FEED's
-        next_visible_pass window -- 8.3.2's behavior exactly, the fix
-        needing the chart's own times.  Exercised, not grepped: the
-        chart's window is STRIPPED, the feed lies the pass into progress
-        and then past its set, and the dot must sweep on the feed's
-        window and, at the feed's set, be RESTORED to the drawn chart
-        (the old behavior -- no better, and no hide the old code did not
-        do).  Skips when the playwright env is absent."""
+        """A chart without data-rise/data-set stands exactly as drawn.
+        Through 9.7.2 renderPass fell back to the FEED's next_visible_pass
+        rise and set for such a chart (a skyfield before 2.3.2); 9.8's
+        floor is skyfield 2.12, every chart since 2.3.2 carries its own
+        window, and the feed no longer carries a rise or set in that
+        chain -- only the visible window, which is not the arc.  Exercised,
+        not grepped: the chart's window is STRIPPED, the feed puts the
+        satellite's visible window in progress around the page's clock,
+        and over several polls the dot must neither sweep nor hide.
+        Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
         import re as relib
@@ -3515,20 +4029,18 @@ class TestSampleSkinRenders:
         state = {'n': 0}
 
         def packet():
-            # The feed's window, around the page's stepped clock: in
-            # progress for the first three polls, then past its set.
+            # The satellite overhead and its visible window open around
+            # the page's stepped clock, on every poll.
             i = state['n']
-            past = i >= 3
             return loop_file({
-                'current.dateTime.raw': t0 + 2 * i,
+                'current.dateTime.unix_epoch.raw': t0 + 2 * i,
                 'almanac.sun.alt': -30.0,
                 'almanac.iss.az': 120.0 + 0.5 * i,
                 'almanac.iss.alt': 45.0,
                 'almanac.iss.sunlit': True,
                 'almanac.iss.label': 'ISS',
-                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': t0 - 60,
-                'almanac.iss.next_visible_pass.set.unix_epoch.raw':
-                    t0 - 1 if past else t0 + 600,
+                'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw': t0 - 60,
+                'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw': t0 + 600,
             }).encode()
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -3566,16 +4078,12 @@ class TestSampleSkinRenders:
             '    errors = []\n'
             "    page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "    open_paused(page, 'http://127.0.0.1:%(port)d/index.html', %(t0)d)\n"
-            '    # The feed window governs: the sweep engages on it.\n'
-            '    step_until(page, "() => document.querySelector(\'" + G + "[transform]\') !== null", 3)\n'
-            "    # The feed's set passes: RESTORED, not hidden -- the drawn\n"
-            '    # chart, transform gone, display untouched.\n'
-            '    step_until(page, """() => {\n'
-            "      var g = document.querySelector('\"\"\" + G + \"\"\"');\n"
-            "      return g !== null && !g.hasAttribute('transform') &&\n"
-            "             g.getAttribute('display') !== 'none';\n"
-            '    }""", 4)\n'
-            "    out = {'errors': errors}\n"
+            '    # Four polls with the window open: nothing moves the dot.\n'
+            '    for _ in range(4):\n'
+            '        step(page)\n'
+            "    out = {'errors': errors,\n"
+            "           'transform': page.get_attribute(G, 'transform'),\n"
+            "           'display': page.get_attribute(G, 'display')}\n"
             '    browser.close()\n'
             'print(json.dumps(out))\n'
             % {'port': port, 't0': t0})
@@ -3587,7 +4095,8 @@ class TestSampleSkinRenders:
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == []
-        assert state['n'] >= 4, 'the past-set packets were never served'
+        assert state['n'] >= 4, 'the in-window packets were never served'
+        assert out['transform'] is None and out['display'] is None, out
 
     def test_dome_refetch_seeds_nothing_at_load(self):
         """The include is inline at the TOP of <body> and the dome sits
@@ -3689,7 +4198,7 @@ class TestSampleSkinRenders:
         a daytime sky with no sun in it -- and no live satellite marker
         survives, dot or name (the name sits in the chart's label layers,
         apart from its dot, so each is removed on its own).  The display
-        half was found by the liveseasons port's review of this same
+        half was found by a consuming skin's review of its port of this same
         function.  Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -3713,7 +4222,7 @@ class TestSampleSkinRenders:
 
         def packet(ts, sun_alt):
             return loop_file({
-                'current.dateTime.raw': ts,
+                'current.dateTime.unix_epoch.raw': ts,
                 # Below the horizon: the live layer HIDES the sun, which
                 # the backdrop drew high (fixture noon).
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': sun_alt,
@@ -3920,7 +4429,7 @@ class TestSampleSkinRenders:
 
         def packet(ts):
             return loop_file({
-                'current.dateTime.raw': ts,
+                'current.dateTime.unix_epoch.raw': ts,
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
                 'almanac.mercury.az': 150.0, 'almanac.mercury.alt': 20.0,
@@ -4083,7 +4592,7 @@ class TestSampleSkinRenders:
             # dome that had NOT frozen would nudge marks and draw a
             # satellite marker within the first two packets.
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 'almanac.sun.az': 180.0 + 0.5 * i,
                 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
@@ -4100,9 +4609,12 @@ class TestSampleSkinRenders:
                 'almanac.iss.next_pass.set.unix_epoch.raw': now + 600,
                 'almanac.iss.next_pass.max_altitude.degree_angle.raw': 45.0,
                 'almanac.iss.next_pass.visible': True,
-                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now - 60,
-                'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 600,
-                'almanac.iss.next_visible_pass.max_altitude.degree_angle.raw': 45.0,
+                'almanac.iss.next_pass.rise_azimuth.ordinal_compass': 'SW',
+                'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw': now - 30,
+                'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw': now + 400,
+                'almanac.iss.next_visible_pass.visible_peak_altitude.degree_angle.raw': 45.0,
+                # loopdata sends a declared chain's compass points always.
+                'almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass': 'SW',
             }).encode()
         # A fresh packet on every poll: the feed is demonstrably alive
         # throughout, which is what makes a motionless dome a freeze.
@@ -4265,7 +4777,7 @@ class TestSampleSkinRenders:
 
         def packet(i):
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 'almanac.sun.az': 180.0 + 0.5 * i,
                 'almanac.sun.alt': 30.0,
                 'almanac.sun.earth_distance': 1.016,
@@ -4413,7 +4925,7 @@ class TestSampleSkinRenders:
 
         def packet_for(ts):
             return loop_file({
-                'current.dateTime.raw': ts,
+                'current.dateTime.unix_epoch.raw': ts,
                 'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                 'almanac.sun.earth_distance': 1.016,
             }).encode()
@@ -4557,7 +5069,7 @@ class TestSampleSkinRenders:
         })
         assert 'data-dome-ts="%s"' % page_dome_ts in frag
         packet = loop_file({
-            'current.dateTime.raw': int(time.time()),
+            'current.dateTime.unix_epoch.raw': int(time.time()),
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
             'almanac.sun.earth_distance': 1.016,
         }).encode()
@@ -4680,7 +5192,7 @@ class TestSampleSkinRenders:
         frag = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (page_dome_ts + 60),
                          frag, count=1).encode()
         packet = loop_file({
-            'current.dateTime.raw': int(time.time()),
+            'current.dateTime.unix_epoch.raw': int(time.time()),
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
             'almanac.sun.earth_distance': 1.016,
         }).encode()
@@ -4833,7 +5345,7 @@ class TestSampleSkinRenders:
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
         now = int(time.time())
         packet = loop_file({
-            'current.dateTime.raw': now,
+            'current.dateTime.unix_epoch.raw': now,
             'almanac(horizon=-18).sun.next_setting.unix_epoch.raw': now + 3600,
             'almanac(horizon=-18).sun.next_rising.unix_epoch.raw': now + 7200,
             'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
@@ -5029,7 +5541,7 @@ class TestSampleSkinRenders:
                 if self.path.startswith('/gauge-data/loop-data.txt'):
                     polls['n'] += 1
                     body = loop_file({
-                        'current.dateTime.raw': phase(polls['n'])[0],
+                        'current.dateTime.unix_epoch.raw': phase(polls['n'])[0],
                         'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                         'almanac.sun.earth_distance': 1.016,
                     }).encode()
@@ -5167,7 +5679,7 @@ class TestSampleSkinRenders:
 
         def packet(i, rolled):
             return loop_file({
-                'current.dateTime.raw': now + 2 * i,
+                'current.dateTime.unix_epoch.raw': now + 2 * i,
                 # Sunset 4 s out; once it passes, the "feed" rolls
                 # next_setting to tomorrow and the min() flips the chip
                 # to the sooner sunrise.
@@ -5188,8 +5700,10 @@ class TestSampleSkinRenders:
                 'almanac.mcnaught.label': 'McNaught',
                 'almanac.halley.perihelion.unix_epoch.raw': now + 1000 * 86400,
                 'almanac.iss.label': 'ISS',
-                'almanac.iss.next_visible_pass.rise.unix_epoch.raw': now + 300,
-                'almanac.iss.next_visible_pass.set.unix_epoch.raw': now + 900,
+                'almanac.iss.az': 200.0,
+                'almanac.iss.next_visible_pass.visible_start.unix_epoch.raw': now + 300,
+                'almanac.iss.next_visible_pass.visible_end.unix_epoch.raw': now + 900,
+                'almanac.iss.next_visible_pass.visible_start_azimuth.ordinal_compass': 'SW',
             }).encode()
         served = {'n': 0}
 
@@ -5362,7 +5876,7 @@ class TestSampleSkinRenders:
                 'almanac.halley.az': 90.0, 'almanac.halley.alt': 20.0,
                 'almanac.halley.earth_distance': 35.0, 'almanac.halley.mag': 25.0,
                 'almanac.halley.label': 'Halley',
-                'current.dateTime.raw': now + 2 * served['n'],
+                'current.dateTime.unix_epoch.raw': now + 2 * served['n'],
                 'almanac.sun.next_setting.unix_epoch.raw': now + 4000,
                 'almanac.sun.next_rising.unix_epoch.raw': now + 40000,
                 'almanac.next_meteor_shower.peak.unix_epoch.raw': now + 3 * 86400,
@@ -5525,7 +6039,7 @@ class TestSampleSkinRenders:
             # chip arithmetic these assertions check is unchanged.
             base = int(time.time()) + 2 * i
             return loop_file({
-                'current.dateTime.raw': base,
+                'current.dateTime.unix_epoch.raw': base,
                 'almanac.sun.next_setting.unix_epoch.raw': base + 3000,
                 'almanac.sun.next_rising.unix_epoch.raw': base + 40000,
             }).encode()
@@ -5669,13 +6183,14 @@ class TestSampleSkinRenders:
 
     def test_badge_age_comes_from_the_server_clock_in_a_real_browser(
             self, wxskyfield_almanac, tmp_path):
-        """The badge's age is read from the SERVER's clock -- the Date
-        header on the very response that carried the record -- so it is
-        true on the one failure the page's own two terms cannot see:
-        weewxd takes the report cycle and loopdata down together, so the
-        last packet is NEWER than the page (the GEN_TS term clamps to
-        zero, correctly) and the stale file is new to this browser (the
-        elapsed term starts at zero).  Four legs, one browser:
+        """Eight feeds, one browser, one page render.  The first four: the
+        badge's age is read from the SERVER's clock -- the Date header on
+        the very response that carried the record -- so it is true on the
+        one failure the page's own two terms cannot see: weewxd takes the
+        report cycle and loopdata down together, so the last packet is
+        NEWER than the page (the GEN_TS term clamps to zero, correctly)
+        and the stale file is new to this browser (the elapsed term
+        starts at zero).
 
         live    a fresh packet, Date stamped now                LIVE
         dead    the station died an hour ago, Date now          ~3600s ago
@@ -5686,8 +6201,22 @@ class TestSampleSkinRenders:
         reads is exactly why the header is consulted first.  The third
         proves the Age term: without it the proxy's frozen Date reads the
         response as young as it was when it was stored, and the badge
-        would say LIVE over an hour-old sky.  Skips when the playwright
-        env is absent."""
+        would say LIVE over an hour-old sky.
+
+        Two more ride the same session and drive the clock's key,
+        declared pinned to seconds (current.dateTime.unix_epoch.raw,
+        9.10.1) and read under that one name -- no second spelling.  The
+        clock the page adopted is read off the unwrapped build's latestTs:
+
+        pinned   the pinned key                      that value, LIVE
+        legacy   only the unpinned current.dateTime  0, BAD DATA, console
+                 .raw of a pre-9.10.1 declaration    names the pinned key
+
+        The legacy leg is what a station sees between installing 9.10.1
+        and restarting weewxd onto the new declaration, and what a skin
+        of its own sees with the new script over an old clock line: the
+        badge names the fault rather than adopting a value whose unit the
+        page cannot know.  Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
         import socketserver
@@ -5700,23 +6229,41 @@ class TestSampleSkinRenders:
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
         (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
-        write_assets(tmp_path)
+        write_assets(tmp_path, unwrapped=True)
         STALE = 3600
+        PINNED = 'current.dateTime.unix_epoch.raw'
+        UNPINNED = 'current.dateTime.raw'
+        # The pinned leg's stamp is fixed on its first request, so every
+        # later poll serves the same record (not news to the page) and
+        # the stamp the page adopted can be compared with the one served.
+        stamps = {}
 
-        def body(age_s):
-            """A minimal record, stamped age_s seconds ago on the STATION's
-            clock (the harness's machine is both)."""
-            return loop_file({
-                'current.dateTime.raw': int(time.time()) - age_s,
-                'almanac.sun.next_setting.unix_epoch.raw': int(time.time() + 3000),
-                'almanac.sun.next_rising.unix_epoch.raw': int(time.time() + 40000),
-            }).encode()
+        def record(stamp, clock):
+            """A minimal record stamped `stamp` on the STATION's clock (the
+            harness's machine is both), the clock written under the keys
+            `clock` asks for."""
+            r = {'almanac.sun.next_setting.unix_epoch.raw': stamp + 3000,
+                 'almanac.sun.next_rising.unix_epoch.raw': stamp + 40000}
+            r.update(clock(stamp))
+            return loop_file(r).encode()
+
+        CLOCKS = {
+            'pinned': lambda t: {PINNED: t},
+            'legacy': lambda t: {UNPINNED: t},
+        }
+
+        def body(mode):
+            if mode == 'live':
+                return record(int(time.time()), CLOCKS['pinned'])
+            if mode in CLOCKS:
+                return record(stamps.setdefault(mode, int(time.time())), CLOCKS[mode])
+            return DEAD_BODY
 
         # The three dead legs serve ONE file, unchanging, which is what a
         # station that stopped writing leaves behind -- so the elapsed
         # term is stamped once, on the first poll, and every later poll
         # repaints the badge from a record that never advances.
-        DEAD_BODY = body(STALE)
+        DEAD_BODY = record(int(time.time()) - STALE, CLOCKS['pinned'])
 
         class Feed(http.server.SimpleHTTPRequestHandler):
             mode = 'live'
@@ -5724,7 +6271,7 @@ class TestSampleSkinRenders:
             def do_GET(self):
                 if not self.path.startswith('/gauge-data/loop-data.txt'):
                     return super().do_GET()
-                out = body(0) if self.mode == 'live' else DEAD_BODY
+                out = body(self.mode)
                 if self.mode in ('cached', 'nodate'):
                     # send_response_only writes no Date and no Server of
                     # its own, so this leg controls both: an intermediate
@@ -5750,7 +6297,7 @@ class TestSampleSkinRenders:
             def log_message(self, *a):
                 pass
 
-        MODES = ('live', 'dead', 'cached', 'nodate')
+        MODES = ('live', 'dead', 'cached', 'nodate', 'pinned', 'legacy')
         servers = {}
         for mode in MODES:
             handler = type('Feed_' + mode, (Feed,), {'mode': mode})
@@ -5769,19 +6316,22 @@ class TestSampleSkinRenders:
             '    for mode, port in PORTS:\n'
             '        page = browser.new_page()\n'
             '        errors = []\n'
+            '        logs = []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
+            "        page.on('console', lambda m: logs.append(m.text))\n"
             '        page.add_init_script(XHR_DONE)\n'
             "        page.goto('http://127.0.0.1:%%d/index.html' %% port)\n"
             "        wait_xhr(page, '/loop-data.txt', 1)   # the badge is written there\n"
-            "        out[mode] = {'errors': errors,\n"
-            "                     'badge': page.inner_text('#live-label')}\n"
+            "        out[mode] = {'errors': errors, 'logs': logs,\n"
+            "                     'badge': page.inner_text('#live-label'),\n"
+            "                     'latestTs': page.evaluate('latestTs')}\n"
             '        page.close()\n'
             '    browser.close()\n'
             'print(json.dumps(out))\n'
             % ([(m, servers[m].server_address[1]) for m in MODES],))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True,
-                                  text=True, timeout=180)
+                                  text=True, timeout=240)
         finally:
             for httpd in servers.values():
                 httpd.shutdown()
@@ -5797,6 +6347,16 @@ class TestSampleSkinRenders:
         assert out['nodate']['badge'] == 'LIVE', \
             ('the backstop alone cannot see this failure -- which is what '
              'the Date header is for', out['nodate']['badge'])
+        for mode in ('pinned', 'legacy'):
+            assert mode in stamps, 'the %s feed was never asked' % mode
+        assert out['pinned']['latestTs'] == stamps['pinned'], (
+            out['pinned']['latestTs'], stamps['pinned'])
+        assert out['pinned']['badge'] == 'LIVE', out['pinned']['badge']
+        assert out['legacy']['latestTs'] == 0, out['legacy']['latestTs']
+        assert out['legacy']['badge'] == 'BAD DATA \u2014 check loop_data_file', \
+            out['legacy']['badge']
+        assert ('loop record has no %s; ignored' % PINNED) in out['legacy']['logs'], \
+            out['legacy']['logs']
 
     def test_comet_dial_mark_renders_in_a_real_browser(
             self, wxskyfield_comet_almanac, tmp_path):
@@ -5828,7 +6388,7 @@ class TestSampleSkinRenders:
         for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
             alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
                                         formatter=report_formatter())
-            r = {'current.dateTime.raw': ts,
+            r = {'current.dateTime.unix_epoch.raw': ts,
                  'almanac.moon.phase': alm.moon.phase,
                  'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
                  'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
@@ -6058,7 +6618,7 @@ class TestSampleSkinRenders:
 
         (tmp_path / 'index.html').write_text(self.render(wxskyfield_almanac))
         write_assets(tmp_path)
-        record = {'current.dateTime.raw': int(time.time()),
+        record = {'current.dateTime.unix_epoch.raw': int(time.time()),
                   'almanac.sun.az': 200.0, 'almanac.sun.alt': 60.0,
                   'almanac.sun.earth_distance': 1.016}
         shapes = {
@@ -6150,11 +6710,13 @@ class TestSampleSkinRenders:
         a solid black disc on the light one.  2.4 was in exactly that
         state for a few hours on 2026-09-08.
 
-        The flip tests cannot catch this: their fixture derives a sunlit
-        chart from a shadowed one, so the style block keeps every role
-        the original markup used and the swapped class is always
-        defined.  Only a chart skyfield drew from scratch can be missing
-        one, so this asks the sibling's own code.  Skips when no
+        Since skyfield 2.12 the flip test's sunlit leg runs on a chart
+        skyfield drew (the chart's instant is the visible peak, always
+        sunlit), so it does reach a swapped class the chart never used;
+        but its fixture is one satellite on one plate, and its shadowed
+        leg derives its chart from the sunlit one, keeping every role.
+        A partner missing for some other role on some other chart is out
+        of its reach, so this asks the sibling's own code.  Skips when no
         weewx-skyfield source is available.  It does NOT skip on 2.3.x:
         9.1 is pinned to 2.4, so meeting an older one is a failure to
         report rather than a configuration to tolerate.
@@ -6296,8 +6858,8 @@ class TestSampleSkinRenders:
 
         Neither number is read and compared to the other: both are
         DERIVED here from the same rule -- a drawing is shown while its
-        smallest label reaches 11px -- and checked against what the
-        files say.  The charts are a 680 unit frame with 10 unit labels
+        smallest label reaches the floor, 11px on a phone and 10px on a
+        desk -- and checked against what the files say, for each floor.  The charts are a 680 unit frame with 10 unit labels
         times the default scale; the dial is a 660 unit frame with the
         12 unit labels this skin gives it.  They are different numbers
         on purpose."""
@@ -6313,10 +6875,20 @@ class TestSampleSkinRenders:
         # number is for.
         default_at = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE)
         assert float(m.group(1)) == round(default_at, 1), (m.group(1), default_at)
+        # The desk rule is the phone width times the ratio of the two
+        # floors, and the script states that ratio as the two floors.
+        ratio = re.search(r'var DESK_RATIO = (\d+) / (\d+);', js)
+        assert ratio is not None, 'the script names no desk ratio'
+        assert (float(ratio.group(1)), float(ratio.group(2))) == \
+            (celestial_page.DESK_LABEL_FLOOR_PX, celestial_page.LABEL_FLOOR_PX), ratio.groups()
+        desk_at = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE,
+                                                 celestial_page.DESK_LABEL_FLOOR_PX)
+        desk_js = float(m.group(1)) * float(ratio.group(1)) / float(ratio.group(2))
         # Which its own type must of course still clear.
         dial_px = float(re.search(
             r'#dial\[data-frame="wide"\] \.gridlab\{font-size:([\d.]+)px\}', css).group(1))
         assert dial_px * float(m.group(1)) / 660.0 >= celestial_page.LABEL_FLOOR_PX
+        assert dial_px * desk_js / 660.0 >= celestial_page.DESK_LABEL_FLOOR_PX
         # And the stylesheet's own, which is the DEFAULT scale's: the
         # last width still narrow, a hair under the first wide one,
         # since a container query has no `not`.
@@ -6325,11 +6897,30 @@ class TestSampleSkinRenders:
         want_css = celestial_page.frame_threshold(celestial_page.DEFAULT_LABEL_SCALE)
         assert len(set(queries)) == 1, queries
         assert 0 < want_css - float(queries[0]) < 0.05, (queries[0], want_css)
+        # The desk rule: a container query at the desk width, inside a
+        # media query that asks only about the POINTER.
+        desk_css = re.findall(
+            r'@media \(pointer: fine\)\{\s*@container \(min-width: ([\d.]+)px\)', css)
+        assert desk_css == ['%.1f' % desk_at], desk_css
         # And it is the DRAWING that is measured, never the window: a
-        # @media query here would be the bug this replaced.
-        blocks = re.findall(r'@media ([^{]+)\{((?:[^{}]|\{[^{}]*\})*)\}', css)
-        assert not [q for q, body in blocks if 'data-frame=' in body], \
-            'a frame switch is keyed to the viewport'
+        # @media query on a width here would be the bug this replaced.
+        # The pointer query is the one @media allowed near a frame rule.
+        # Each block is read where it stands, to its own closing brace.
+        code = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
+        for m in re.finditer(r'@media ([^{]+)\{', code):
+            depth, i = 1, m.end()
+            while depth and i < len(code):
+                depth += {'{': 1, '}': -1}.get(code[i], 0)
+                i += 1
+            if 'data-frame=' in code[m.end():i]:
+                assert m.group(1).strip() == '(pointer: fine)', \
+                    'a frame switch is keyed to the viewport: %s' % m.group(1)
+        # And the desk rule reaches only fragments at the DEFAULT scale,
+        # keyed on the phone width every fragment carries; any other
+        # set's desk width is elsewhere and the script decides it.
+        desk_rules = re.findall(r'\.(?:dome|pass)frag\[data-frames="both"\]'
+                                r'\[data-frame-at="([\d.]+)"\]', css)
+        assert desk_rules and set(desk_rules) == {'%.1f' % default_at}, desk_rules
 
     def test_the_label_scale_default_clears_the_floor(self):
         """The default label scale and the frame threshold are one
@@ -6357,6 +6948,12 @@ class TestSampleSkinRenders:
         m = re.search(r'#dial\[data-frame="wide"\] \.gridlab\{font-size:([\d.]+)px\}', css)
         assert m is not None, 'the dial declares no wide grid label size'
         assert float(m.group(1)) * dial_at / 660.0 >= floor, (m.group(1), dial_at)
+        # And the desk rule's, at the desk floor.
+        desk_floor = celestial_page.DESK_LABEL_FLOOR_PX
+        desk_at = celestial_page.frame_threshold(scale, desk_floor)
+        assert 10.0 * scale * desk_at / 680.0 == pytest.approx(desk_floor), (scale, desk_at)
+        dial_desk = dial_at * desk_floor / floor      # what DESK_RATIO gives the dial
+        assert float(m.group(1)) * dial_desk / 660.0 >= desk_floor, (m.group(1), dial_desk)
 
     def test_chart_palette_in_step_with_skyfield(self):
         """The dial's grid color, its Mars dot and the three dome label
@@ -8061,21 +8658,22 @@ class TestConsumerSkin:
         import re as relib
         import shutil
         mod, _ = load_wxskyfield()
-        wall = int(time.time())
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
-            packets = sat_feed_packets(wall, 'ConsumerReport')
+            # At the fixture instant, where the fixture's elements are
+            # good: the page's clock is the packets' stamp.
+            packets = sat_feed_packets('ConsumerReport')
         servers = {}
         urls = []
         for layout in ('', 'js'):
             root = self.generate(tmp_path / (layout or 'root'), wxskyfield_sat_sky, layout=layout)
             page_path = root / 'astro' / 'index.html'
             html = page_path.read_text(encoding='utf-8')
-            # The embedded backdrop restamped an hour behind the browser's
-            # clock: the slot walk then wants a slot the page does not
-            # hold and asks for it on the first packet -- the request
-            # that shows where the page looks.
-            html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (wall - 3600),
+            # The embedded backdrop restamped an hour behind the page's
+            # clock (the packets' stamp): the slot walk then wants a slot
+            # the page does not hold and asks for it on the first packet
+            # -- the request that shows where the page looks.
+            html = relib.sub(r'data-dome-ts="\d+"', 'data-dome-ts="%d"' % (TIME_TS - 3600),
                              html, count=1)
             page_path.write_text(html, encoding='utf-8')
             (root / 'other').mkdir()
@@ -8138,7 +8736,7 @@ class TestConsumerSkin:
         wall = int(time.time())
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sky)
-            packets = sat_feed_packets(wall, 'ConsumerReport', satellites=False)
+            packets = sat_feed_packets('ConsumerReport', satellites=False, start=wall)
         root = self.generate(tmp_path, wxskyfield_sky, panels='geocentric')
         page = (root / 'astro' / 'index.html').read_text(encoding='utf-8')
         assert '<section id="pass-sec">' in page and 'does not name the pass panel' in page
@@ -8604,6 +9202,273 @@ class TestConfigScript:
         assert out['badge'] == 'BAD DATA \u2014 check loop_data_file'
 
 
+# The runner for the dial placement test: one browser, a page per frame,
+# every fixture sky drawn on one packet and then on two, every rule
+# checked against what was DRAWN.  PORT, FIXTURE are substituted by the test.
+DIAL_RUNNER = r'''
+import json, sys
+from playwright.sync_api import sync_playwright
+FIXTURE = json.load(open(sys.argv[1]))
+STAMP = "() => latest === null ? null : latest['current.dateTime.unix_epoch.raw']"
+DRAW = """(arg) => {
+  const rec = Object.assign({}, arg.rec);
+  if (arg.rot) {
+    Object.keys(rec).forEach(k => { if (/\\.az$/.test(k)) rec[k] = (rec[k] + arg.rot) % 360; });
+  }
+  const now = Math.floor(Date.now() / 1000);
+  rec['current.dateTime.unix_epoch.raw'] = now;
+  latest = rec; packets = [];
+  if (arg.prev) {
+    const pr = Object.assign({}, rec);
+    Object.keys(arg.prev).forEach(k => { if (typeof rec[k] === 'number') {
+      pr[k] = /\\.az$/.test(k) ? (rec[k] - arg.prev[k] + 720) % 360 : rec[k] - arg.prev[k]; } });
+    pr['current.dateTime.unix_epoch.raw'] = now - 600;
+    packets = [{t: now - 600, r: pr}, {t: now, r: rec}];
+  }
+  latestRecvTs = Date.now() / 1000;
+  if (arg.rebuild) { dialMarks = null; }
+  renderGeo();
+}"""
+# Every rule, read off the drawn elements with geometry of its own: the
+# marks' centers and radii from their circles (the Sun's glow while it is
+# drawn), the trails and tails from their lines, the names from their
+# anchors, widths and ink.  The ink comes through the page's own measuring
+# (inkMeasureAll), so this cannot see a canvas that is wrong; the screenshot
+# probes in the design measured that.  TOL is how far this reading may
+# differ from the placer's own numbers.
+CHECK = """() => {
+  const TOL = 1, out = {bad: [], placed: 0, dropped: 0, leaders: 0, ownCross: 0, sides: {}, ringsOff: 0};
+  const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+  const sDist = (px, py, s) => { const dx = s[2]-s[0], dy = s[3]-s[1], L = dx*dx + dy*dy;
+    const t = L ? Math.max(0, Math.min(1, ((px-s[0])*dx + (py-s[1])*dy) / L)) : 0;
+    return Math.hypot(px - s[0] - t*dx, py - s[1] - t*dy); };
+  const inBox = (x, y, b) => x >= b.l && x <= b.r && y >= b.t && y <= b.b;
+  const sBox = (s, b) => { for (let k = 0; k <= 60; k++) { const t = k / 60;
+    if (inBox(s[0] + (s[2]-s[0])*t, s[1] + (s[3]-s[1])*t, b)) return true; } return false; };
+  const ptBox = (x, y, b) => Math.hypot(Math.max(b.l - x, 0, x - b.r), Math.max(b.t - y, 0, y - b.b));
+  const boxSeg = (b, s) => sBox(s, b) ? 0 : Math.min(ptBox(s[0], s[1], b), ptBox(s[2], s[3], b),
+    sDist(b.l, b.t, s), sDist(b.r, b.t, s), sDist(b.l, b.b, s), sDist(b.r, b.b, s));
+  const segSeg = (a, b) => { let d = Infinity; for (let k = 0; k <= 60; k++) { const t = k / 60;
+    d = Math.min(d, sDist(a[0] + (a[2]-a[0])*t, a[1] + (a[3]-a[1])*t, b)); } return d; };
+  const boxBox = (a, b) => Math.hypot(Math.max(a.l - b.r, 0, b.l - a.r), Math.max(a.t - b.b, 0, b.t - a.b));
+  const gap = (b, mk) => Math.max(0, ptBox(mk.x, mk.y, b) - mk.r);
+  const seg = el => ['x1','y1','x2','y2'].map(n => parseFloat(el.getAttribute(n)));
+  const shown = el => el && el.getAttribute('display') !== 'none';
+  const dial = document.getElementById('dial');
+  const W = parseFloat(dial.getAttribute('viewBox').split(' ')[2]);
+  const marks = [];
+  const earth = dial.querySelector('circle.cel-geo-earth');
+  marks.push({key: 'earth', x: +earth.getAttribute('cx'), y: +earth.getAttribute('cy'),
+              r: +earth.getAttribute('r'), lab: dial.querySelector('.cel-earthlab'), lead: null, strokes: []});
+  GEO_BODIES.concat(COMET_NAMES).forEach(k => {
+    const m = dialMarks[k];
+    if (!m || m.g.getAttribute('display') === 'none') return;
+    let c = (m.glow && m.glow.getAttribute('display') !== 'none') ? m.glow : (m.rim || m.dot);
+    let x, y, r;
+    if (c.tagName === 'circle') { x = +c.getAttribute('cx'); y = +c.getAttribute('cy'); r = +c.getAttribute('r'); }
+    else { const b = c.getBBox(); x = b.x + b.width / 2; y = b.y + b.height / 2; r = b.width / 2; }
+    const strokes = [];
+    (m.segs || []).concat(m.rays || []).forEach(l => { if (shown(l) && l.getAttribute('x1') !== null) strokes.push(seg(l)); });
+    marks.push({key: k, x: x, y: y, r: r, lab: m.lab, lead: m.lead, strokes: strokes});
+  });
+  const names = [];
+  marks.forEach(mk => {
+    if (!shown(mk.lab)) { out.dropped++; out.sides[mk.key] = 'dropped'; return; }
+    const q = {el: mk.lab, m: labelMetrics(mk.lab, mk.lab.textContent)};
+    inkMeasureAll([q]);
+    const x = +mk.lab.getAttribute('x'), y = +mk.lab.getAttribute('y');
+    const anchor = mk.lab.style.textAnchor || mk.lab.getAttribute('text-anchor') || 'start';
+    const w = q.m.w, p = q.ink.pad || 0;
+    const left = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+    const gb = {l: left - p, r: left + w + p, t: y - q.ink.above - p, b: y + q.ink.below + p};
+    const line = (mk.lead && shown(mk.lead)) ? seg(mk.lead) : null;
+    names.push({mk: mk, gb: gb, line: line,
+                pad: {l: left - 3 - p, r: left + w + 3 + p, t: y - q.m.above - 3 - p, b: y + q.m.below + 3 + p}});
+    out.placed++;
+    out.sides[mk.key] = Math.round(x) + ',' + Math.round(y) + ',' + anchor;
+  });
+  const cards = Array.from(dial.querySelectorAll('text.cardinal')).map(t => {
+    const b = t.getBBox(); return {l: b.x, r: b.x + b.width, t: b.y, b: b.y + b.height}; });
+  const lines = names.filter(n => n.line).map(n => n.line);
+  names.forEach(n => {
+    const mk = n.mk, own = gap(n.gb, mk), why = (s) => out.bad.push(mk.key + ': ' + s);
+    if (n.line) {
+      out.leaders++;
+      if (!(Math.abs(own - 11) <= TOL || Math.abs(own - 19) <= TOL)) why('leadered name ' + own.toFixed(2) + ' from its mark');
+      const L = n.line;
+      if (Math.abs(dist(L[0], L[1], mk.x, mk.y) - (mk.r + 1)) > TOL) why('line does not start 1 outside its disc');
+      const ne = [Math.max(n.gb.l, Math.min(mk.x, n.gb.r)), Math.max(n.gb.t, Math.min(mk.y, n.gb.b))];
+      if (Math.abs(dist(L[2], L[3], ne[0], ne[1]) - 1.5) > TOL) why('line does not end 1.5 short of its name');
+      const ang = Math.abs(Math.atan2(L[3] - L[1], L[2] - L[0]) * 180 / Math.PI);
+      if (Math.min(ang, 180 - ang) < 15) why('line is level');
+      // Past its first 6 units the line keeps 3 from its OWN trail and
+      // tail: a line along either reads as neither.
+      const len = dist(L[0], L[1], L[2], L[3]), f = Math.min(1, 6 / len);
+      const far = [L[0] + (L[2]-L[0])*f, L[1] + (L[3]-L[1])*f, L[2], L[3]];
+      mk.strokes.forEach(s => { if (segSeg(far, s) - 0.75 < 3 - TOL) why('line along its own trail or tail'); });
+    } else if (Math.abs(own - 3) > TOL) {
+      why('touching name ' + own.toFixed(2) + ' from its mark');
+    }
+    const nearEnd = [Math.max(n.gb.l, Math.min(mk.x, n.gb.r)), Math.max(n.gb.t, Math.min(mk.y, n.gb.b))];
+    marks.forEach(o => {
+      if (o === mk) return;
+      if (gap(n.gb, o) < own + 3 - TOL) why(o.key + ' as near the ink as its own');
+      if (dist(nearEnd[0], nearEnd[1], o.x, o.y) - o.r < own + 6 - TOL) why(o.key + ' crowds the near end');
+      o.strokes.forEach(s => { if (boxSeg(n.gb, s) - 0.75 < 6 - TOL) why(o.key + "'s stroke within 6 of the ink"); });
+      if (n.line) {
+        if (sDist(o.x, o.y, n.line) - o.r < 6 - TOL) why('line within 6 of ' + o.key);
+        o.strokes.forEach(s => { if (segSeg(n.line, s) - 0.75 < 3 - TOL) why('line within 3 of ' + o.key + "'s stroke"); });
+      }
+    });
+    if (n.line) {
+      lines.forEach(l => { if (l !== n.line && segSeg(n.line, l) < 3 - TOL) why('line within 3 of another line'); });
+      names.forEach(o => { if (o !== n && sBox(n.line, o.gb)) why('line crosses ' + o.mk.key); });
+    }
+    if (mk.strokes.some(s => sBox(s, n.pad))) out.ownCross++;
+    names.forEach(o => { if (o !== n && n.pad.l + TOL / 2 < o.pad.r && o.pad.l + TOL / 2 < n.pad.r &&
+                                  n.pad.t + TOL / 2 < o.pad.b && o.pad.t + TOL / 2 < n.pad.b) why('padded box hits ' + o.mk.key); });
+    if (n.pad.l < -TOL || n.pad.t < -TOL || n.pad.r > W + TOL || n.pad.b > W + TOL) why('off the drawing');
+  });
+  Array.from(dial.querySelectorAll('text.gridlab')).forEach(t => {
+    if (!shown(t)) return;
+    const b = t.getBBox(), x = +t.getAttribute('x');
+    const cell = {l: x - b.width / 2, r: x + b.width / 2, t: b.y, b: b.y + b.height};
+    const why = s => out.bad.push('ring ' + t.textContent + ': ' + s);
+    if (placedSpot['ring ' + t.textContent] !== 157.5) out.ringsOff++;   // off today's spoke
+    marks.forEach(o => {
+      if (gap(cell, o) < 6 - TOL) why('within 6 of ' + o.key);
+      o.strokes.forEach(s => { if (boxSeg(cell, s) - 0.75 < 6 - TOL) why('within 6 of ' + o.key + "'s stroke"); });
+    });
+    names.forEach(n => { if (boxBox(cell, n.gb) < 12 - TOL) why('within 12 of ' + n.mk.key); });
+    cards.forEach(c => { if (boxBox(cell, c) < 12 - TOL) why('within 12 of a cardinal'); });
+    lines.forEach(l => { if (boxSeg(cell, l) < 3 - TOL) why('within 3 of a line'); });
+  });
+  marks.forEach(mk => { if (mk.lead && shown(mk.lead) && !shown(mk.lab)) out.bad.push(mk.key + ': line of a dropped name'); });
+  return out;
+}"""
+def open_page(browser, vw, vh, lat, px):
+    page = browser.new_page(viewport={'width': vw, 'height': vh})
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.clock.install(time=T0)
+    page.clock.pause_at(T0 + 0.5)
+    page.goto('http://127.0.0.1:PORT/index.html')
+    page.wait_for_function('() => latest !== null && dialMarks !== null', timeout=10000)
+    page.evaluate('lat => { COMET_NAMES = ["halley", "hale_bopp"]; STATION_LAT = lat; }', lat)
+    if px:
+        page.add_style_tag(content='#dial .bodylab, #dial .cel-earthlab{font-size:%dpx !important}' % px)
+    return page, errors
+results = {'sets': {}, 'legs': {}}
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    for st in FIXTURE['sets']:
+        for frame in st['frames']:
+            vw, vh = (390, 844) if frame == 'narrow' else (1280, 900)
+            page, errors = open_page(browser, vw, vh, st['lat'], st['label_px'])
+            agg = {'frame': [], 'bad': [], 'placed': 0, 'dropped': 0, 'leaders': 0,
+                   'ownCross': 0, 'settle': 0, 'ringsOff': 0}
+            for n, sky in enumerate(st['skies']):
+                page.evaluate(DRAW, {'rec': sky['rec'], 'prev': None, 'rebuild': True})
+                one = page.evaluate(CHECK)
+                page.evaluate(DRAW, {'rec': sky['rec'], 'prev': sky['prev'], 'rebuild': False})
+                two = page.evaluate(CHECK)
+                agg['frame'].append(page.evaluate("() => document.getElementById('dial').getAttribute('data-frame')"))
+                for res in (one, two):
+                    agg['bad'] += ['sky %d: %s' % (n, b) for b in res['bad']]
+                agg['placed'] += two['placed']
+                agg['dropped'] += two['dropped']
+                agg['leaders'] += two['leaders']
+                agg['ownCross'] += two['ownCross']
+                agg['ringsOff'] += two['ringsOff']
+                agg['settle'] += sum(1 for k in two['sides'] if one['sides'].get(k) != two['sides'][k])
+            agg['errors'] = errors
+            results['sets']['%s/%s' % (st['name'], frame)] = agg
+            page.close()
+    # The mechanism legs, on a phone page and the fixture's first sky.
+    pa = FIXTURE['sets'][0]
+    page, errors = open_page(browser, 390, 844, pa['lat'], None)
+    sky = pa['skies'][0]
+    def draw(rebuild=True, rot=0, prev=True):
+        page.evaluate(DRAW, {'rec': sky['rec'], 'prev': sky['prev'] if prev else None,
+                             'rebuild': rebuild, 'rot': rot})
+    legs = results['legs']
+    # The order: the first two names the spots are asked for.
+    page.evaluate("""() => { window.__order = []; const f = nameSpots;
+      nameSpots = function(mk, m, lead) { if (!lead) __order.push(mk.key); return f(mk, m, lead); }; }""")
+    draw()
+    legs['order'] = page.evaluate('() => __order.slice(0, 2)')
+    # The canvas's font: set once per face per pass, through the sentinel --
+    # two assignments a face -- however the names are ordered.
+    legs['font_sets'] = page.evaluate("""() => {
+      const proto = CanvasRenderingContext2D.prototype, d = Object.getOwnPropertyDescriptor(proto, 'font');
+      let n = 0; Object.defineProperty(proto, 'font', {configurable: true, get: d.get,
+        set: function(v) { n++; d.set.call(this, v); }});
+      pendingLabels.reverse(); placeLabels(); const a = n; n = 0; placeLabels(); const b = n;
+      const faces = new Set(Array.from(document.querySelectorAll('#dial .bodylab, #dial .cel-earthlab'))
+        .filter(t => t.getAttribute('display') !== 'none')
+        .map(t => { const cs = getComputedStyle(t); return [cs.fontStyle, cs.fontVariantCaps, cs.fontWeight,
+                    cs.fontSize, cs.fontFamily, cs.letterSpacing].join('|'); }));
+      Object.defineProperty(proto, 'font', d);
+      return [a, b, faces.size]; }""")
+    # The guard: the canvas answers every name on the bundled page, inside
+    # its cell; then a stylesheet it cannot follow, one property at a time.
+    probe = """() => Array.from(document.querySelectorAll('#dial .bodylab, #dial .cel-earthlab'))
+      .filter(t => t.getAttribute('display') !== 'none').map(t => {
+        const q = {el: t, m: labelMetrics(t, t.textContent)}; inkMeasureAll([q]);
+        const em = parseFloat(getComputedStyle(t).fontSize);
+        return {body: t.classList.contains('bodylab'), pad: q.ink.pad || 0,
+                cell: q.ink.above === q.m.above && q.ink.below === q.m.below,
+                inside: q.ink.above <= q.m.above + 0.15 * em && q.ink.below <= q.m.below + 0.15 * em}; })"""
+    draw()
+    legs['bundled'] = page.evaluate(probe)
+    for name, css in (('uppercase', 'text-transform:uppercase'), ('bshift', 'baseline-shift:1px'),
+                      ('stroke', 'stroke:#000;stroke-width:3px'), ('overline', 'text-decoration:overline'),
+                      ('shadow', 'text-shadow:3px 2px 1px #000')):
+        page.evaluate("css => { const s = document.createElement('style'); s.id = 'leg';"
+                      " s.textContent = '#dial .bodylab{' + css + '}'; document.head.appendChild(s); }", css)
+        draw()
+        legs[name] = {'ink': page.evaluate(probe), 'bad': page.evaluate(CHECK)['bad']}
+        page.evaluate("() => document.getElementById('leg').remove()")
+    # A canvas that refuses the face: every name to the cell.
+    legs['refused'] = page.evaluate("""() => {
+      const proto = CanvasRenderingContext2D.prototype, d = Object.getOwnPropertyDescriptor(proto, 'font');
+      Object.defineProperty(proto, 'font', {configurable: true, get: d.get,
+        set: function(v) { if (v === INK_SENTINEL) d.set.call(this, v); }});
+      inkCanvas = null;
+      const r = (""" + probe + """)();
+      Object.defineProperty(proto, 'font', d); inkCanvas = null; return r; }""")
+    # Remembered spots: a quarter degree on, the names stay; a rebuild
+    # forgets them; Earth's is never remembered.
+    draw()
+    before = page.evaluate('() => Object.assign({}, placedSpot)')
+    draw(rebuild=False, rot=0.25)
+    after = page.evaluate('() => Object.assign({}, placedSpot)')
+    legs['turn_moved'] = sum(1 for k in before if before[k] != after.get(k))
+    legs['remembered'] = page.evaluate('() => Object.keys(placedSpot)')
+    page.evaluate('() => { dialMarks = null; buildDial(); }')
+    legs['after_build'] = page.evaluate('() => Object.keys(placedSpot).length')
+    # A body whose position leaves the feed takes its line with it.
+    legs['absent_line'] = None
+    for sk in pa['skies']:
+        page.evaluate(DRAW, {'rec': sk['rec'], 'prev': sk['prev'], 'rebuild': True})
+        key = page.evaluate("""() => GEO_BODIES.concat(COMET_NAMES).find(k => dialMarks[k] &&
+          dialMarks[k].lead.getAttribute('display') !== 'none') || null""")
+        if key:
+            rec = dict(sk['rec'])
+            rec['almanac.%s.az' % key] = None
+            page.evaluate(DRAW, {'rec': rec, 'prev': sk['prev'], 'rebuild': False})
+            legs['absent_line'] = page.evaluate(
+                "k => dialMarks[k].lead.getAttribute('display')", key)
+            break
+    # Earth's mark answers a tap.
+    draw()
+    legs['earth_title'] = page.evaluate("() => (document.querySelector('#dial circle.cel-geo-earth title') || {}).textContent || null")
+    legs['errors'] = errors
+    browser.close()
+print(json.dumps(results))
+'''
+
+
 class TestPanels:
     """The countdown row and the Geocentric (9.0 step 3): the chip row and
     the dial-plus-roster are $celestial.countdown_html($almanac) and
@@ -8631,13 +9496,56 @@ class TestPanels:
         assert m is not None, chip_id
         return m.group(1)
 
+    def test_a_group_time_override_changes_nothing_in_the_first_paint(
+            self, wxskyfield_comet_sky):
+        """Every instant the first paint bakes -- the chips' data-ts targets
+        and countdowns, the two rosters' pass lines -- is read pinned to
+        seconds (.unix_epoch.raw, 9.10.1), as the live layer's loop fields
+        are declared.  A bare .raw on a time tag follows the report's
+        group_time: WeeWX's ValueHelper converts on construction with the
+        almanac's converter, so on a report with `group_time =
+        unix_epoch_ms` it answers milliseconds, and through 9.10 the chips
+        first-painted millisecond targets (a countdown of some 55,000
+        years) against the script's seconds clock.  Rendered under a
+        millisecond converter, the three panels must equal the seconds
+        render byte for byte.  The instrument is proven first: the
+        millisecond almanac really does answer a thousandfold on a bare
+        .raw, so an identical render cannot be vacuous."""
+        mod, _ = load_wxskyfield()
+        ms = weewx.units.Converter({'group_time': 'unix_epoch_ms'})
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_comet_sky)
+
+            def panels(converter):
+                alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                            formatter=report_formatter(), converter=converter)
+                page = self.page(make_sky_page())
+                return alm, (page.countdown_html(alm), page.dome_roster_html(alm),
+                             page.pass_roster_html(alm))
+
+            alm_s, seconds = panels(None)
+            alm_ms, millis = panels(ms)
+            # The instrument: the override reaches the tags.
+            bare_s = alm_s.sun.next_setting.raw
+            bare_ms = alm_ms.sun.next_setting.raw
+            assert abs(bare_ms - bare_s * 1000) < 1, (bare_s, bare_ms)
+            assert alm_ms.iss.next_visible_pass.visible_start.raw > 1e11
+            assert alm_ms.mcnaught.perihelion.raw > 1e11
+        # Every chip and every roster line carries a target or a countdown.
+        assert 'data-ts="' in seconds[0]
+        for name, a, b in zip(('countdown', 'dome roster', 'pass roster'), seconds, millis):
+            assert a == b, name
+
     def test_pass_chip_first_paints_every_state(self, wxskyfield_sat_sky):
         """The pass chip's first paint is the live layer's pick at the
-        generation instant -- the soonest visible pass -- in the live
-        layer's own dress: counting down in hours and minutes inside the
-        final day, in days and hours beyond, 'overhead now' during the
-        pass with an empty countdown, and its rise AND set instants baked
-        so a feed without the pass keys can roll it by itself."""
+        generation instant -- the soonest visible WINDOW (skyfield 2.12)
+        -- in the live layer's own dress: counting down in hours and
+        minutes inside the final day, in days and hours beyond, 'overhead
+        now' while the window is open with an empty countdown, and the
+        window's start AND end baked so a feed without the pass keys can
+        roll it by itself: the start floored, the end rounded UP, since
+        the live layer compares a whole-second stamp with the fractional
+        end."""
         mod, _ = load_wxskyfield()
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
@@ -8647,14 +9555,16 @@ class TestPanels:
                                             formatter=report_formatter())
                 return self.page(make_sky_page()).countdown_html(alm)
 
-            html = row(TIME_TS)                        # the fixture pass is ~15 h out
-            assert re.search(r'^ data-ts="\d+" data-set="\d+"$', self.chip_attrs(html, 'chip-pass'))
+            html = row(TIME_TS)                        # the fixture window is ~15 h out
+            # 03:17:14.15 to 03:18:49.30 PDT, Jun 22.
+            assert self.chip_attrs(html, 'chip-pass') == ' data-ts="1750587434" data-set="1750587530"'
+
             assert self.cell(html, 'chip-pass-k') == 'Iss'
             assert self.cell(html, 'chip-pass-d') == 'appears in'
             assert re.match(r'\d{1,2}\xa0h \d{1,2}\xa0m$', self.cell(html, 'chip-pass-v'))
             html = row(1750388400)                     # Jun 19 20:00 PDT: 32 h out
             assert re.match(r'1\xa0d \d{1,2}\xa0h$', self.cell(html, 'chip-pass-v'))
-            html = row(1750503568 + 120)               # two minutes into the pass
+            html = row(1750503834 + 120)               # two minutes into the window
             assert self.cell(html, 'chip-pass-d') == 'overhead now'
             assert self.cell(html, 'chip-pass-v') == ''
             assert ' hidden' not in self.chip_attrs(html, 'chip-pass')
@@ -8788,7 +9698,7 @@ class TestPanels:
         translated through [Texts], so one translation serves both."""
         alm = wxskyfield_sat_almanac
         texts = {'Hover or tap any mark for its coordinates.': 'Tippen.',
-                 "The whole sky as it will stand at the pass's highest point, on the date above — the dashed arc is the satellite's path, its rise and set times at the ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.": 'Der ganze Himmel.'}
+                 "The whole sky as it will stand at the satellite's highest visible point, on the date above — the dashed arc is the satellite's path and the solid stretch the part you can see, its times at its ends.  Only stars bright enough for a twilight sky are drawn: a visible pass happens while your sky is half dark.": 'Der ganze Himmel.'}
         page = celestial_page.CelestialPage(
             {'Extras': {'loop_data_file': 'loop.txt'}, 'lang': 'en',
              'REPORT_NAME': REPORT_NAME, 'Texts': texts}, make_sky_page(), 300)
@@ -8985,7 +9895,7 @@ class TestPanels:
         cap that keeps a phone drawing at its design size has to reach the
         drawing by its own class too.
 
-        Without it #dome-wrap svg's 640px cap stretches a 360 unit
+        Without it the 640px box (#dome-svg) stretches a 360 unit
         drawing to 640px, with ~26px labels: the exact fault the cap
         exists to prevent, arrived at through the degraded path where
         skyfield's wide draw failed and its narrow one did not.
@@ -9065,12 +9975,18 @@ class TestPanels:
         back to the stylesheet's default width, which is wrong for every
         set that declares a label_scale of its own.
 
-        Driven at 800px with a set at 0.8, deliberately: the stylesheet
-        would say wide there (784px of glass, over its 623px), and the
-        set's own width is 935px, so the two disagree and only the
-        fitted answer is right.  And driven with no ResizeObserver,
-        also deliberately: with one, an early measurement is healed as
-        soon as the area is shown and the ordering cannot be tested.
+        Driven at 800px with a set at 0.8, deliberately: the chart is
+        held at its 640px cap, so the stylesheet would say wide there
+        (over its 623px), and the set's own width is 935px, so the two
+        disagree and only the fitted answer is right.  And driven with
+        no ResizeObserver, also deliberately: with one, an early
+        measurement is healed as soon as the area is shown and the
+        ordering cannot be tested.
+
+        The same render then serves the pass chart's half of
+        assert_judged_by_drawn_width, on three more pages in the same
+        browser: shown from the start, at 1100px, as shipped, with its
+        cap lifted and with it capped at half the column.
         Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -9101,6 +10017,16 @@ class TestPanels:
             '<script src="celestial.js"></script></head><body>%s'
             '<section id="pass-sec" hidden><h2>p</h2>%s</section></body></html>'
             % (page.config_script(alm), hidden), encoding='utf-8')
+        # The chart shown from the start, three ways.
+        for name, style in (('broad', ''),
+                            ('uncapped', '<style>#pass-chart{max-width:none}</style>'),
+                            ('half', '<style>#pass-chart{max-width:50%}</style>')):
+            (tmp_path / ('%s.html' % name)).write_text(
+                '<!DOCTYPE html><html class="theme-dark"><head><meta charset="utf-8">'
+                '<link rel="stylesheet" href="celestial.css">%s'
+                '<script src="celestial.js"></script></head><body>%s'
+                '<section id="pass-sec"><h2>p</h2>%s</section></body></html>'
+                % (style, page.config_script(alm), panel), encoding='utf-8')
         _domes, pass_name = celestial_page.fragment_names(fs)
         (tmp_path / pass_name).write_text(page.pass_fragment(alm, fs), encoding='utf-8')
         write_assets(tmp_path, unwrapped=True)   # the runner calls refreshPass
@@ -9115,39 +10041,51 @@ class TestPanels:
         httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         runner = tmp_path / 'runner.py'
+        port = httpd.server_address[1]
         runner.write_text(
             'import json\n'
             'from playwright.sync_api import sync_playwright\n'
-            'with sync_playwright() as p:\n'
-            '    b = p.chromium.launch()\n'
-            '    pg = b.new_page(viewport={"width": 800, "height": 900})\n'
-            '    # No ResizeObserver, which is the whole point: WITH one,\n'
-            '    # a fragment measured too early is healed the moment the\n'
-            '    # area becomes visible, and the ordering bug is\n'
-            '    # invisible.  Without one, watchFrames falls back to a\n'
-            '    # window resize listener that never fires here, so the\n'
-            '    # judgment at swap time is the only one there is.\n'
-            '    pg.add_init_script("delete window.ResizeObserver;")\n'
-            '    errs = []\n'
-            "    pg.on('pageerror', lambda e: errs.append(str(e)))\n"
-            '    pg.goto("http://127.0.0.1:%d/index.html")\n'
-            '    pg.wait_for_function("() => typeof refreshPass === \'function\'")\n'
-            '    pg.evaluate("() => refreshPass()")\n'
-            '    pg.wait_for_function("() => document.querySelector('
-            '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
-            '    out = pg.evaluate("""() => {\n'
-            '      const w = document.querySelector(".passfrag");\n'
-            '      const vis = f => { const e = document.querySelector('
-            '".cel-frame[data-frame=" + f + "]");\n'
-            '        return e !== null && e.getBoundingClientRect().width > 0; };\n'
-            '      return {fit: w.getAttribute("data-frame-fit"),\n'
-            '              at: w.getAttribute("data-frame-at"),\n'
-            '              box: Math.round(w.getBoundingClientRect().width),\n'
-            '              wide: vis("wide"), narrow: vis("narrow")};\n'
-            '    }""")\n'
-            '    out["errors"] = errs\n'
-            '    print(json.dumps(out))\n'
-            '    b.close()\n' % httpd.server_address[1])
+            + FRAME_PROBE +
+            ('with sync_playwright() as p:\n'
+             '    b = p.chromium.launch()\n'
+             '    pg = b.new_page(viewport={"width": 800, "height": 900})\n'
+             '    # No ResizeObserver, which is the whole point: WITH one,\n'
+             '    # a fragment measured too early is healed the moment the\n'
+             '    # area becomes visible, and the ordering bug is\n'
+             '    # invisible.  Without one, watchFrames falls back to a\n'
+             '    # window resize listener that never fires here, so the\n'
+             '    # judgment at swap time is the only one there is.\n'
+             '    pg.add_init_script("delete window.ResizeObserver;")\n'
+             '    errs = []\n'
+             "    pg.on('pageerror', lambda e: errs.append(str(e)))\n"
+             '    pg.goto("http://127.0.0.1:%d/index.html")\n'
+             '    pg.wait_for_function("() => typeof refreshPass === \'function\'")\n'
+             '    pg.evaluate("() => refreshPass()")\n'
+             '    pg.wait_for_function("() => document.querySelector('
+             '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
+             '    out = pg.evaluate("""() => {\n'
+             '      const w = document.querySelector(".passfrag");\n'
+             '      const vis = f => { const e = document.querySelector('
+             '".cel-frame[data-frame=" + f + "]");\n'
+             '        return e !== null && e.getBoundingClientRect().width > 0; };\n'
+             '      return {fit: w.getAttribute("data-frame-fit"),\n'
+             '              at: w.getAttribute("data-frame-at"),\n'
+             '              box: Math.round(w.getBoundingClientRect().width),\n'
+             '              wide: vis("wide"), narrow: vis("narrow")};\n'
+             '    }""")\n'
+             '    out["errors"] = errs\n'
+             '    for name in ("broad", "uncapped", "half"):\n'
+             '        pg = b.new_page(viewport={"width": 1100, "height": 900})\n'
+             '        errs = []\n'
+             "        pg.on('pageerror', lambda e: errs.append(str(e)))\n"
+             '        pg.goto("http://127.0.0.1:%d/" + name + ".html")\n'
+             '        pg.wait_for_function("() => document.querySelector('
+             '\'.passfrag[data-frame-fit]\') !== null", timeout=10000)\n'
+             '        out[name] = pg.evaluate(PROBE)\n'
+             '        out[name]["errors"] = errs\n'
+             '        pg.close()\n'
+             '    print(json.dumps(out))\n'
+             '    b.close()\n' % (port, port)))
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
                                   timeout=120)
@@ -9157,10 +10095,15 @@ class TestPanels:
         out = jsonlib.loads(proc.stdout)
         assert out['errors'] == [], out['errors']
         assert out['at'] == '935.0', out
-        # The band where the stylesheet and the set disagree.
+        # The band where the stylesheet and the set disagree: the
+        # fragment at its 640px cap, not the 784px column.
         assert 624 < out['box'] < 935, out
         assert out['fit'] == 'narrow', out
         assert out['narrow'] is True and out['wide'] is False, out
+        for name in ('broad', 'uncapped', 'half'):
+            assert out[name]['errors'] == [], (name, out[name]['errors'])
+            assert out[name]['pass']['at'] == '935.0', (name, out[name])
+        assert_judged_by_drawn_width(out, 'pass')
 
     def test_each_set_carries_the_width_its_own_labels_need(self, wxskyfield_sat_almanac):
         """The width a fragment changes frame at is the SET's, not a
@@ -9175,9 +10118,15 @@ class TestPanels:
         assert celestial_page.frame_threshold(1.0) == 748.0
         for scale, want in ((0.8, 935.0), (1.2, 623.3), (1.35, 554.1), (1.4, 534.3)):
             assert round(celestial_page.frame_threshold(scale), 1) == want, scale
-        # The floor the derivation stands on, spelled out rather than
+        # And the desk rule's, on the 10px floor the charts are laid out
+        # for: one floor below the phone's at every scale.
+        for scale, want in ((0.8, 850.0), (1.2, 566.7), (1.35, 503.7), (1.4, 485.7)):
+            assert round(celestial_page.frame_threshold(
+                scale, celestial_page.DESK_LABEL_FLOOR_PX), 1) == want, scale
+        # The floors the derivation stands on, spelled out rather than
         # folded into a magic number.
         assert celestial_page.LABEL_FLOOR_PX == 11.0
+        assert celestial_page.DESK_LABEL_FLOOR_PX == 10.0
         alm = wxskyfield_sat_almanac
         for scale, want in ((0.8, '935.0'), (celestial_page.DEFAULT_LABEL_SCALE, '623.3')):
             page = self.sets_page(make_sky_page(),
@@ -9187,25 +10136,153 @@ class TestPanels:
             for markup in (page.dome_html(alm, set='s'), page.pass_html(alm, set='s'),
                            page.dome_fragment(alm, 0, 300, fs), page.pass_fragment(alm, fs)):
                 assert 'data-frame-at="%s"' % want in markup, (scale, markup[:200])
+                # The desk width is not carried: the script derives it.
+                assert 'data-frame-at-desk' not in markup, (scale, markup[:200])
         # A fragment with one drawing switches nothing, so it declares
         # no width either.
         assert 'data-frame-at' not in celestial_page.CelestialPage._frames_attr('<svg></svg>')
+
+    def test_a_desk_keeps_its_desk_drawing_longer_than_a_phone_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The floor follows the device, not the width.  On a phone the
+        desk drawing shows while its smallest label reaches 11px (623.3px
+        of chart at the default scale); on a desk, with a fine primary
+        pointer, while it reaches the 10px the charts are laid out for
+        (566.7px).  A phone in landscape is as wide as a narrow desk
+        window, which is why no width alone can decide.
+
+        Driven on the bundled page, whose stacked layout gives the dome,
+        the pass chart and the dial one column, at widths a pixel or two
+        either side of each threshold -- a single width cannot catch a
+        threshold a few pixels off.  Each leg reads which drawing is
+        DISPLAYED, not the verdict attribute, so a stylesheet slip that
+        left the attribute right and the wrong drawing showing would
+        fail it; and the dial must agree with the charts, which is what
+        sharing the number is for.  Then: the stylesheet alone paints the
+        desk drawing first on a desk; and a pointer that changes with the
+        window unmoved re-decides both.
+
+        Its own browser and server, because each device needs a context
+        of its own (touch is set when a context is made, not after).
+        Cost: about 6 s net on a Pi -- the page render is shared with
+        two other tests and made once per process.
+        Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        packets = dial_feed()
+        html = sample_sat_page(wxskyfield_sat_almanac)
+        assert html.count('data-frame-at="623.3"') == 2, 'dome and pass, default set'
+        (tmp_path / 'index.html').write_text(html)
+        # The stylesheet alone.
+        nojs = re.sub(r'<script\b[^>]*>.*?</script>', '', html, flags=re.S)
+        assert 'celestial.start' not in nojs
+        (tmp_path / 'nojs.html').write_text(nojs)
+        write_assets(tmp_path, unwrapped=True)   # the runner reads dialMarks
+
+        served = {'n': 0}
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    body = packets[min(served['n'], len(packets) - 1)]
+                    served['n'] += 1
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(
+            'import json\n'
+            'from playwright.sync_api import sync_playwright\n'
+            + STEP_HELPERS
+            + ('T0 = %r\nBASE = "http://127.0.0.1:%d/"\n' % (float(TIME_TS), port))
+            + DESK_RUNNER)
+        try:
+            proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
+                                  timeout=240)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        assert out['errors'] == [], out['errors']
+
+        def agrees(leg, want, floor=None):
+            got = out[leg]
+            assert got['dome'] is not None and got['pass'] is not None, (leg, got)
+            for kind in ('dome', 'pass'):
+                assert got[kind]['shown'] == want, (leg, kind, got)
+            assert got['dial'] == want, (leg, 'dial', got)
+            # The dial is judged on the same column the charts are.
+            assert abs(got['dialBox'] - got['dome']['box']) < 1.5, (leg, got)
+            if floor is not None:
+                assert got['dome']['glass'] >= floor - 0.05, (leg, got)
+
+        # A desk: wide down to 566.7 and not a pixel below it, every
+        # label it shows at least 10px.
+        agrees('desk 565', 'narrow')
+        agrees('desk 568', 'wide', floor=10)
+        # A phone or tablet: the phone rule, unchanged, at 11px.
+        agrees('touch 622', 'narrow')
+        agrees('touch 625', 'wide', floor=11)
+        # The pointer changes with the window unmoved: both re-decide.
+        agrees('flip 600', 'wide')
+        agrees('flip after', 'narrow')
+        # The stylesheet alone: a desk paints the desk drawing first, a
+        # phone the phone drawing.
+        for leg, want in (('nojs desk', 'wide'), ('nojs touch', 'narrow')):
+            for kind in ('dome', 'pass'):
+                assert out[leg][kind]['shown'] == want, (leg, kind, out[leg])
 
     def test_a_sets_own_threshold_beats_the_stylesheets_in_a_real_browser(
             self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
         """A set at a label scale of its own changes frame where ITS
         labels stop reading, not where the stylesheet's default says.
 
-        The case: label_scale 0.8 in a 700px column.  The stylesheet
-        switches at 623.29px, so left to itself it shows the DESK
-        drawing there -- and that drawing's smallest label is 10 x 0.8 x
-        700 / 680 = 8.2px, under the floor, which is the whole fault
-        this release removes.  The set's own width is 935px, so the
-        phone drawing is the right one and celestial.js says so.
+        The case: label_scale 0.8 in a 700px column, the dome held at
+        640px.  The stylesheet switches at 623.29px, so
+        left to itself it shows the DESK drawing there -- and that
+        drawing's smallest label is 10 x 0.8 x 640 / 680 = 7.5px, under
+        the floor.  The set's own width is 935px, so the phone drawing is
+        the right one and celestial.js says so.
 
         Also pinned: the stylesheet alone (no javascript) still gets the
         DEFAULT scale right, which is what a page without the script
         keeps.
+
+        And the width judged is the one the drawing is DRAWN at, which is
+        why the dome's 640px cap sits on the box holding its fragment
+        (#dome-svg, as #pass-chart's does) and never on the drawing.  The
+        pass chart's half of this rides the hidden-area test's render
+        rather than drawing the same chart again here.  At 1100px the
+        column is over 935, but the fragment measures 640 and the phone
+        drawing shows, every label on it clearing 11px on the glass.
+        Through 9.8 the dome's cap sat on its svg, the fragment measured
+        the whole column, and the desk drawing showed at 640px.  A page
+        that lifts the cap (`max-width:none`) is judged by its column and
+        keeps the desk drawing; one capping it at a share of its column
+        (`max-width:50%`) is judged by that share.
         Skips when the playwright env is absent."""
         import http.server
         import json as jsonlib
@@ -9232,6 +10309,12 @@ class TestPanels:
         # The same page with the script withheld: the stylesheet alone.
         (tmp_path / 'nojs.html').write_text(
             html.replace('<script src="celestial.js"></script>', ''), encoding='utf-8')
+        # The same page with the cap lifted, and with it capped by a share
+        # of the column rather than a length.
+        for name, cap in (('uncapped', 'none'), ('half', '50%')):
+            (tmp_path / ('%s.html' % name)).write_text(
+                html.replace('</head>', '<style>#dome-svg{max-width:%s}</style></head>' % cap),
+                encoding='utf-8')
         write_assets(tmp_path)
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -9245,24 +10328,20 @@ class TestPanels:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         runner = tmp_path / 'runner.py'
         runner.write_text(
-            'import json\n'
-            'from playwright.sync_api import sync_playwright\n'
-            'BASE = "http://127.0.0.1:%d/"\n'
-            'PROBE = """() => {\n'
-            '  const w = document.querySelector(".domefrag");\n'
-            '  const vis = f => { const e = document.querySelector(\n'
-            '      ".cel-frame[data-frame=" + f + "]");\n'
-            '    return e !== null && e.getBoundingClientRect().width > 0; };\n'
-            '  return {at: w.getAttribute("data-frame-at"),\n'
-            '          fit: w.getAttribute("data-frame-fit"),\n'
-            '          box: Math.round(w.getBoundingClientRect().width),\n'
-            '          wide: vis("wide"), narrow: vis("narrow")};\n'
-            '}"""\n'
+            ('import json\n'
+             'from playwright.sync_api import sync_playwright\n'
+             'BASE = "http://127.0.0.1:%d/"\n' % httpd.server_address[1])
+            + FRAME_PROBE +
             'out = {}\n'
             'with sync_playwright() as p:\n'
             '    b = p.chromium.launch()\n'
-            '    for name, path in (("js", "index.html"), ("nojs", "nojs.html")):\n'
-            '        pg = b.new_page(viewport={"width": 716, "height": 900})\n'
+            '    for name, path, width in (("js", "index.html", 716),\n'
+            '                              ("nojs", "nojs.html", 716),\n'
+            '                              ("nojs band", "nojs.html", 616),\n'
+            '                              ("broad", "index.html", 1100),\n'
+            '                              ("uncapped", "uncapped.html", 1100),\n'
+            '                              ("half", "half.html", 1100)):\n'
+            '        pg = b.new_page(viewport={"width": width, "height": 900})\n'
             '        errs = []\n'
             "        pg.on('pageerror', lambda e: errs.append(str(e)))\n"
             '        pg.goto(BASE + path)\n'
@@ -9273,8 +10352,7 @@ class TestPanels:
             '        out[name]["errors"] = errs\n'
             '        pg.close()\n'
             '    b.close()\n'
-            'print(json.dumps(out))\n'
-            % httpd.server_address[1])
+            'print(json.dumps(out))\n')
         try:
             proc = subprocess.run([pwenv, str(runner)], capture_output=True, text=True,
                                   timeout=180)
@@ -9282,11 +10360,16 @@ class TestPanels:
             httpd.shutdown()
         assert proc.returncode == 0, proc.stderr
         out = jsonlib.loads(proc.stdout)
-        js, nojs = out['js'], out['nojs']
-        assert js['errors'] == [], js['errors']
-        # The column really is in the band where the two answers differ:
-        # wider than the stylesheet's 624, narrower than this set's 935.
-        assert 624 < js['box'] < 935, js
+        # Every page but the one whose script was withheld on purpose:
+        # its config block still calls celestial.start.
+        for name, leg in out.items():
+            if not name.startswith('nojs'):
+                assert leg['errors'] == [], (name, leg['errors'])
+        js, nojs = out['js']['dome'], out['nojs']['dome']
+        # In the band where the two answers differ: wider than the
+        # stylesheet's 624, narrower than this set's 935.  The column is
+        # in it, and so is the fragment, held at its 640px cap.
+        assert 624 < js['col'] < 935 and js['box'] == 640, js
         assert js['at'] == '935.0', js
         # The script's verdict, and the drawing it produces.
         assert js['fit'] == 'narrow', js
@@ -9296,6 +10379,14 @@ class TestPanels:
         # the script has to refine it.
         assert nojs['fit'] is None, nojs
         assert nojs['wide'] is True and nojs['narrow'] is False, nojs
+        # In the desk band (a 600px drawing, between the default's 566.7
+        # and this set's 850) the stylesheet's desk rule must not reach
+        # this set: it states the default scale's width, and would hand a
+        # 0.8 set its desk drawing at 7px labels.
+        band = out['nojs band']['dome']
+        assert 590 < band['box'] < 610, band
+        assert band['wide'] is False and band['narrow'] is True, band
+        assert_judged_by_drawn_width(out, 'dome')
 
     def test_a_label_box_is_measured_not_calculated_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -9446,26 +10537,9 @@ class TestPanels:
         if not os.path.exists(pwenv):
             pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
 
-        bodies = ['sun', 'moon', 'mercury', 'venus', 'mars', 'jupiter',
-                  'saturn', 'uranus', 'neptune', 'proxima_centauri']
-        packets = []
-        for ts in (TIME_TS, TIME_TS + 2, TIME_TS + 4):
-            alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
-                                        formatter=report_formatter())
-            r = {'current.dateTime.raw': ts,
-                 'almanac.moon.phase': alm.moon.phase,
-                 'almanac.next_full_moon.unix_epoch.raw': alm.next_full_moon.raw,
-                 'almanac.next_new_moon.unix_epoch.raw': alm.next_new_moon.raw}
-            for b in bodies:
-                obj = getattr(alm, b)
-                r['almanac.%s.az' % b] = obj.az
-                r['almanac.%s.alt' % b] = obj.alt
-                r['almanac.%s.earth_distance' % b] = obj.earth_distance
-            packets.append(loop_file(r).encode())
+        packets = dial_feed()
 
-        (tmp_path / 'index.html').write_text(
-            TestSampleSkinRenders.render(wxskyfield_sat_almanac,
-                                         sky_page=make_sky_page()))
+        (tmp_path / 'index.html').write_text(sample_sat_page(wxskyfield_sat_almanac))
         write_assets(tmp_path, unwrapped=True)   # the runner reads internals
 
         served = {'n': 0}
@@ -9796,7 +10870,7 @@ class TestPanels:
         mod, _ = load_wxskyfield()
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
-            packet = sat_feed_packets(TIME_TS + 10)[0]
+            packet = sat_feed_packets(start=TIME_TS + 10)[0]
         record = jsonlib.loads(packet)[REPORT_NAME]
         record['almanac.iss.az'], record['almanac.iss.alt'] = 120.0, 45.0
         (tmp_path / 'loop.txt').write_bytes(loop_file(record).encode())
@@ -9878,7 +10952,11 @@ class TestPanels:
             'with sync_playwright() as p:\n'
             '    browser = p.chromium.launch()\n'
             '    for name, w in (("desk", 1400), ("phone", 390), ("small", 600)):\n'
-            '        page = browser.new_page(viewport={"width": w, "height": 900})\n'
+            '        # The phone and the small screen are touch devices: the\n'
+            '        # phone rule (11px) is theirs, the desk rule (10px) the\n'
+            '        # desk\'s, and a width alone cannot tell them apart.\n'
+            '        page = browser.new_page(viewport={"width": w, "height": 900},\n'
+            '                                has_touch=(name != "desk"))\n'
             '        errors, fetched = [], []\n'
             "        page.on('pageerror', lambda e: errors.append(str(e)))\n"
             "        page.on('request', lambda r: fetched.append(r.url.split('/')[-1].split('?')[0]) if '.txt' in r.url and 'loop' not in r.url else None)\n"
@@ -9931,8 +11009,10 @@ class TestPanels:
         # A 1400px window draws them wide; 390 and 600 draw them narrow.
         # This page carries only the panel stylesheet, so its chrome is a
         # browser's default body margin and the drawing is the window
-        # less 16px -- 584px at 600, under the 624 the wide frame needs
-        # to carry an 11px label.
+        # less 16px -- 584px at 600, under the 623.3 the wide frame needs
+        # to carry an 11px label on a touch device.  (On a desk, whose
+        # floor is 10px, 584 would be wide: the desk rule's own test
+        # covers that.)
         assert wide_state(out['desk']['before']) == WIDE, out['desk']['before']
         assert wide_state(out['phone']['before']) == NARROW, out['phone']['before']
         assert wide_state(out['small']['before']) == NARROW, out['small']['before']
@@ -9999,14 +11079,13 @@ class TestPanels:
             for when in ('before', 'after'):
                 assert out[name][when]['hits'] == [], (name, when, out[name][when]['hits'])
         assert out['squeezed']['before']['hits'] == [], out['squeezed']['before']['hits']
-        # WHAT THE ORDER GUARANTEES, which is not "every name survives"
-        # -- how many fit depends on where the sky has put things.  The
-        # cardinals and the Earth label are placed before anything that
-        # moves, so they are always there; the bodies are placed nearest
-        # Earth outward, so the moon and the sun are the first two names
-        # tried and cannot be crowded out by a planet or a comet.  That
-        # is the whole of the promise, and it is what the dial is read
-        # by.
+        # WHAT THE ORDER GUARANTEES is only the cardinals, which the
+        # pass does not place.  Every other name, Earth's, the Moon's and
+        # the Sun's included, is placed only where it reads as its own
+        # body's (9.8), so any of them can be crowded out on some sky.
+        # The names below are a PIN of what this test's sky shows on a
+        # phone, not a guarantee: if a placement change drops one here,
+        # look at the sky before changing the pin.
         phone = out['phone']['before']['names']
         for must in ('N', 'E', 'S', 'W', 'Earth', 'Moon', 'Sun'):
             assert must in phone, (must, phone)
@@ -10030,6 +11109,119 @@ class TestPanels:
         # labels on every desktop there has ever been: its own type is
         # 12 units now, and the frame hands over to the narrow drawing
         # before it can render them under 11px.
+
+    def test_dial_names_read_as_their_own_bodies_in_a_real_browser(
+            self, wxskyfield_sat_almanac, tmp_path):
+        """The 9.8 placement rules, checked on what the page DRAWS, over the
+        fixture of real skies (tests/fixtures/dial-skies.json): the skies
+        where 9.7.2 misattributed most names on a phone, the rim skies the
+        frame check bites on, and Sydney.  Each sky is drawn on one packet
+        (no trails yet: names placed against the predicted trail) and then
+        on two (trails drawn), the dial rebuilt for every sky, on a phone
+        page and a desk page in one browser.  For every name: a touching
+        one GAP (3) from its mark, a leadered one GAP plus its tier; every
+        other mark at least 3 farther from its ink than its own, and 6
+        farther from its near end; every other body's trail and tail 6
+        from its ink; padded boxes apart and in the frame.  Every line: 1
+        outside its disc to 1.5 short of its name, never level, 6 from
+        other discs, 3 from other lines and strokes, crossing no name.
+        Every ring number: 6 from discs and strokes, 12 from names and
+        cardinals, 3 from lines.  The Sun's disc is read as its glow
+        while the glow is drawn, so a name the glow refuses is checked by
+        the glow.  Then the mechanisms on one open phone page: the order,
+        the canvas font set once per face, the ink guard taking the canvas
+        on the bundled page and refusing it for five stylesheets it cannot
+        follow, a canvas that refuses the face, remembered spots, Earth's
+        <title>.  Skips when the playwright env is absent."""
+        import http.server
+        import json as jsonlib
+        import socketserver
+        import subprocess
+        import threading
+
+        pwenv = os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
+                             'tools', 'pwenv', 'bin', 'python')
+        if not os.path.exists(pwenv):
+            pytest.skip('the weewx-skyfield tools/pwenv playwright env is not available')
+        fixture = os.path.join(REPO_ROOT, 'tests', 'fixtures', 'dial-skies.json')
+        first = jsonlib.load(open(fixture))['sets'][0]['skies'][0]['rec']
+        packet = loop_file(dict(first, **{'current.dateTime.unix_epoch.raw': TIME_TS})).encode()
+        (tmp_path / 'index.html').write_text(sample_sat_page(wxskyfield_sat_almanac))
+        write_assets(tmp_path, unwrapped=True)   # the runner reads internals
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/gauge-data/loop-data.txt'):
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(packet)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(packet)
+                    return
+                return super().do_GET()
+
+            def translate_path(self, path):
+                return str(tmp_path / path.split('?')[0].lstrip('/'))
+
+            def log_message(self, *a):
+                pass
+
+        httpd = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        runner = tmp_path / 'runner.py'
+        runner.write_text(DIAL_RUNNER.replace('PORT', str(port))
+                          .replace('T0 + 0.5', '%d + 0.5' % TIME_TS)
+                          .replace('time=T0', 'time=%d' % TIME_TS))
+        try:
+            proc = subprocess.run([pwenv, str(runner), fixture], capture_output=True,
+                                  text=True, timeout=600)
+        finally:
+            httpd.shutdown()
+        assert proc.returncode == 0, proc.stderr
+        out = jsonlib.loads(proc.stdout)
+        print(jsonlib.dumps({k: {f: v for f, v in a.items() if f != 'frame'}
+                             for k, a in out['sets'].items()}))
+        # Floors and bounds, from the build measured 2026-10-26 (placed:
+        # 269, 317, 71, 98, 63, 72; names moving when the trails appear:
+        # 7 in all; names crossed by their own tail or trail: 21), with
+        # room for an engine's rounding: a placer that drops everything,
+        # one that stops reserving the predicted trail, and one that
+        # stops trying tail-crossed spots last all fail them.
+        floors = {'palo-alto/narrow': 240, 'palo-alto/wide': 285,
+                  'proxima-diagonal/narrow': 63, 'proxima-east-west/wide': 88,
+                  'sydney/narrow': 56, 'sydney/wide': 64}
+        for name, agg in out['sets'].items():
+            frame = name.split('/')[1]
+            assert agg['errors'] == [], (name, agg['errors'])
+            assert set(agg['frame']) == {frame}, (name, agg['frame'])
+            assert agg['bad'] == [], (name, agg['bad'][:20])
+            assert agg['placed'] >= floors[name], (name, agg['placed'])
+        sets = out['sets'].values()
+        assert sum(a['settle'] for a in sets) <= 12, [a['settle'] for a in sets]
+        assert sum(a['ownCross'] for a in sets) <= 28, [a['ownCross'] for a in sets]
+        assert out['sets']['palo-alto/narrow']['leaders'] > 0
+        assert out['sets']['palo-alto/narrow']['ringsOff'] > 0
+        legs = out['legs']
+        assert legs['errors'] == []
+        assert legs['order'] == ['moon', 'earth'], legs['order']
+        a, b, faces = legs['font_sets']
+        assert a == b == 2 * faces, legs['font_sets']
+        assert legs['bundled'] and all(not n['cell'] and n['inside'] for n in legs['bundled'])
+        for leg, pad in (('uppercase', None), ('bshift', None), ('stroke', 6.0),
+                         ('overline', None), ('shadow', 4.0)):
+            assert legs[leg]['bad'] == [], (leg, legs[leg]['bad'])
+            body = [n for n in legs[leg]['ink'] if n['body']]
+            assert body and all(n['cell'] for n in body), (leg, legs[leg]['ink'])
+            if pad is not None:
+                assert all(abs(n['pad'] - pad) < 1e-6 for n in body), (leg, body)
+        assert all(n['cell'] for n in legs['refused']), legs['refused']
+        assert legs['turn_moved'] <= 2, legs['turn_moved']
+        assert 'earth' not in legs['remembered'] and legs['remembered'], legs['remembered']
+        assert legs['after_build'] == 0
+        assert legs['earth_title']
+        assert legs['absent_line'] == 'none', legs['absent_line']
 
     def test_a_narrow_layer_shows_by_width_and_moves_with_its_mark_in_a_real_browser(
             self, wxskyfield_sat_sky, wxskyfield_sat_almanac, tmp_path):
@@ -10106,7 +11298,7 @@ class TestPanels:
         mod, _ = load_wxskyfield()
         with saved_almanacs():
             assert mod.register_almanac(wxskyfield_sat_sky)
-            packet = sat_feed_packets(TIME_TS + 10)[0]
+            packet = sat_feed_packets(start=TIME_TS + 10)[0]
         # The ISS overhead, so the live layer draws its own marker and
         # its name in each label layer.
         record = jsonlib.loads(packet)[REPORT_NAME]
@@ -10115,7 +11307,7 @@ class TestPanels:
         (tmp_path / 'loop.txt').write_bytes(packet)
         # Four seconds later the ISS has set: the runner swaps this in.
         gone = dict(record)
-        gone['current.dateTime.raw'] += 4
+        gone['current.dateTime.unix_epoch.raw'] += 4
         gone['almanac.iss.alt'] = -10.0
         (tmp_path / 'loop-set.txt').write_bytes(loop_file(gone).encode())
         write_assets(tmp_path)          # the shipped build
@@ -10510,7 +11702,6 @@ class TestPanels:
         assert "setHtml('chip-pass-k', esc(satLabel(bestTag)));" in js
         assert "setHtml('chip-shower-k', esc(showerLab));" in js
         assert "fmt('{name} perihelion', {name: esc(satLabel(cometTag))})" in js
-        assert '{rise: esc(riseOrd), alt: maxAlt.toFixed(0), culm: esc(culmOrd),' in js
         # And the panels name their own files; the config no longer does,
         # and the script defaults to none: no attribute, no fetch.
         assert "wrap.getAttribute('data-dome-prefix')" in js
@@ -11102,23 +12293,26 @@ class TestPanels:
         assert 'not readable' in caplog.text
 
     def test_pass_lines_in_step_with_skyfield(self, wxskyfield_sat_almanac):
-        """The roster's head line is weewx-skyfield's satellite chip line,
-        reckoned by the same rules (_sat_when's minutes/hours/calendar-day
-        ladder, _days_until's floor): pinned to the sibling's own code at
-        the boundary instants, like sky.js, the palette and de.conf, so
-        the next threshold or wording change lands on both pages."""
+        """The dome roster's head line (the geometric pass) is reckoned by
+        weewx-skyfield's own rules (_sat_when's minutes/hours/calendar-day
+        ladder, _days_until's floor): pinned to the sibling's code at the
+        boundary instants, like sky.js, the palette and de.conf, so the
+        next threshold or wording change lands on both pages.  The visible
+        roster is pinned to skyfield's whole satellites panel, below."""
         load_wxskyfield()
         sp = make_sky_page()
         page = self.page(sp)
-        so = types.SimpleNamespace(sunlit=True)
+        so = types.SimpleNamespace(sunlit=True, next_visible_pass=types.SimpleNamespace(
+            visible_start=epoch_leaf(None), visible_end=epoch_leaf(None)))
 
         def pass_obj(rise, sset):
             ord_ = types.SimpleNamespace(ordinal_compass=lambda: 'N')
             return types.SimpleNamespace(
-                rise=types.SimpleNamespace(raw=rise), set=types.SimpleNamespace(raw=sset),
+                rise=epoch_leaf(rise), set=epoch_leaf(sset),
                 rise_azimuth=ord_, culmination_azimuth=ord_, set_azimuth=ord_,
-                max_altitude=types.SimpleNamespace(raw=40.0),
-                duration=types.SimpleNamespace(raw=600.0), visible=True)
+                max_altitude=types.SimpleNamespace(degree_angle=types.SimpleNamespace(raw=40.0)),
+                duration=types.SimpleNamespace(second=types.SimpleNamespace(raw=600.0)),
+                visible=True)
 
         fall_back = time.mktime((2025, 11, 1, 12, 0, 0, 0, 0, -1))   # the day before DST ends
         cases = []
@@ -11131,9 +12325,142 @@ class TestPanels:
                 cases.append((now, rise, sset))
         for now, rise, sset in cases:
             alm = types.SimpleNamespace(time_ts=now)
-            line, _sub = page._pass_lines(alm, so, pass_obj(rise, sset), 'x', False)
+            line, _sub = page._pass_lines(alm, so, pass_obj(rise, sset), so.next_visible_pass)
             want = '%s · %s' % (sp._date_hm(rise), sp._sat_when(alm, rise, sset))
             assert line == want, (now, rise, sset)
+        # The one branch skyfield never meets: a start already past with
+        # no open window reads "just set", as the live satWhen says, never
+        # a countdown clamped to "in 1 m".
+        alm = types.SimpleNamespace(time_ts=TIME_TS)
+        line, _sub = page._pass_lines(alm, so, pass_obj(TIME_TS - 60, None), so.next_visible_pass)
+        assert line.endswith(' · just set'), line
+        # A figure that cannot be read blanks the sub-line only, in both
+        # tables, as the live layer does.
+        broken = pass_obj(TIME_TS + 600, TIME_TS + 900)
+        broken.max_altitude = types.SimpleNamespace(degree_angle=types.SimpleNamespace(raw=None))
+        line, sub = page._pass_lines(alm, so, broken, so.next_visible_pass)
+        assert line.endswith(' · in 10\u00a0m') and sub == '', (line, sub)
+
+    def test_a_row_that_fails_costs_only_its_own_table(self, wxskyfield_sat_almanac):
+        """The two tables' rows for one satellite are computed apart: a
+        visible window that cannot be read first-paints that row empty
+        and leaves the dome's row whole, and the reverse.  A satellite
+        whose rows both fail is skipped, as through 9.7.2."""
+        real = wxskyfield_sat_almanac
+
+        def rows_of(alm):
+            # A page per case: the rows are memoized per almanac id(), and
+            # a freed almanac's id is free for the next.
+            return {r[0]: r for r in self.page(make_sky_page())._sat_rows(alm)}
+
+        def alm_with(**iss):
+            sat = types.SimpleNamespace(label=real.iss.label, sunlit=real.iss.sunlit,
+                                        next_pass=real.iss.next_pass,
+                                        next_visible_pass=real.iss.next_visible_pass)
+            for k, v in iss.items():
+                setattr(sat, k, v)
+            return types.SimpleNamespace(time_ts=real.time_ts, iss=sat,
+                                         tiangong=real.tiangong)
+
+        rows = rows_of(alm_with(next_visible_pass=None))
+        assert rows['iss'][2:4] == ('', '')
+        assert 'Jun 21, 12:06 PM' in rows['iss'][4]
+        rows = rows_of(alm_with(next_pass=None))
+        assert rows['iss'][4:6] == ('', '')
+        assert rows['iss'][2] == 'Jun 22, 3:17 AM · in 15\u00a0h'
+        rows = rows_of(alm_with(next_pass=None, next_visible_pass=None))
+        assert 'iss' not in rows and 'tiangong' in rows
+
+    def test_dome_tag_follows_the_visible_window(self, wxskyfield_sat_sky):
+        """The dome roster's tag on the fixture ISS pass A (rises 03:11:25,
+        visible 03:17:14 to 03:18:49, sets 03:21:17 PDT Jun 22), first
+        paint at four instants: "visible" before rise -- the pass to come
+        will be -- "not visible" from rise into the window, "visible"
+        inside it, and "not visible" after it while the pass is still
+        overhead.  The bool alone said "visible" through all four."""
+        mod, _ = load_wxskyfield()
+        page = self.page(make_sky_page())
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+
+            def tag(ts):
+                alm = weewx.almanac.Almanac(ts, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                            formatter=report_formatter())
+                rows = {r[0]: r for r in page._sat_rows(alm)}
+                assert 'Jun 22' in rows['iss'][4], rows['iss']
+                return rows['iss'][5].rsplit(' · ', 1)[1]
+
+            base = TIME_TS + 15 * 3600               # Jun 22 03:00 PDT
+            assert tag(base + 5 * 60) == 'visible'
+            assert tag(base + 14 * 60) == 'not visible'
+            assert tag(base + 18 * 60) == 'visible'
+            assert tag(base + 20 * 60) == 'not visible'
+
+    def test_window_lines_in_step_with_skyfield(self, wxskyfield_sat_sky):
+        """The Next Visible Pass roster's two lines ARE weewx-skyfield's
+        satellites panel row for the same window (2.12): its date and
+        countdown, then appears/peaks/disappears at the window's start,
+        peak and end and its length -- compared with the sibling's own
+        satellites_html, fed the same window, at instants before the
+        window, inside it and on its edges, and on lengths and peaks that
+        land exactly on a half (150 s, 270 s, 17.5 degrees: both sides
+        round half to even, Python's rule)."""
+        mod, _ = load_wxskyfield()
+        sp = make_sky_page()
+        page = self.page(sp)
+        so = types.SimpleNamespace(sunlit=True)
+        ords = ('ESE', 'SE', 'E')
+
+        def window(start, dur, peak):
+            return {'rise': start - 300, 'set': start + dur + 120, 'start': start,
+                    'peak': start + dur / 2, 'end': start + dur, 'peak_alt': peak,
+                    'start_ord': ords[0], 'peak_ord': ords[1], 'end_ord': ords[2],
+                    'duration': dur}
+
+        def as_pass(q):
+            def at(v):
+                return types.SimpleNamespace(raw=v)
+
+            def compass(v):
+                return types.SimpleNamespace(ordinal_compass=lambda: v)
+            return types.SimpleNamespace(
+                visible_start=epoch_leaf(q['start']), visible_end=epoch_leaf(q['end']),
+                visible_peak_altitude=types.SimpleNamespace(degree_angle=at(q['peak_alt'])),
+                visible_duration=types.SimpleNamespace(second=at(q['duration'])),
+                visible_start_azimuth=compass(q['start_ord']),
+                visible_peak_azimuth=compass(q['peak_ord']),
+                visible_end_azimuth=compass(q['end_ord']))
+
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            checked = 0
+            for now in (TIME_TS, 1750388400):
+                alm = weewx.almanac.Almanac(now, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                            formatter=report_formatter())
+                for start, dur, peak in ((now + 3600 * 5.5, 150.0, 17.5),
+                                         (now + 59 * 60 + 30, 270.0, 16.5),
+                                         (now - 30, 95.15625, 40.2),
+                                         (now, 60.0, 10.0),
+                                         (now + 86400 * 2, 235.546875, 35.2)):
+                    q = window(start, dur, peak)
+                    sp._sat_pass = (lambda q: lambda alm, name: (
+                        {'usable': True, 'pass': q} if name == 'iss'
+                        else {'usable': True, 'pass': None}))(q)
+                    html = sp.satellites_html(alm)
+                    row = re.search(r'data-body="iss">.*?<div class="chipline mono">(.*?)</div>'
+                                    r'<div class="chipsub mono">(.*?)</div>', html)
+                    assert row is not None, html
+                    line, sub = page._window_lines(alm, so, as_pass(q))
+                    assert (line, sub) == (row.group(1), row.group(2)), (now, start, dur)
+                    checked += 1
+            assert checked == 10
+            broken = as_pass(window(TIME_TS + 600, 150.0, 20.0))
+            broken.visible_peak_altitude = types.SimpleNamespace(
+                degree_angle=types.SimpleNamespace(raw=None))
+            alm = weewx.almanac.Almanac(TIME_TS, LATITUDE, LONGITUDE, altitude=ALTITUDE_M,
+                                        formatter=report_formatter())
+            line, sub = page._window_lines(alm, so, broken)
+            assert line.endswith(' · in 10\u00a0m') and sub == '', (line, sub)
 
     def test_an_empty_pass_wrapper_hides_the_chart_in_a_real_browser(
             self, wxskyfield_sat_almanac, tmp_path):
@@ -11558,6 +12885,7 @@ class TestContrast:
                 ('comet tail below the horizon', p('.cel-comet-tail', 'stroke'),
                  float(p('.cel-geocomet.cel-below .cel-comet-tail', 'opacity')), card),
                 ('Earth dot', p('.cel-fill-earth', 'fill'), 1, card),
+                ("a crowded name's leader line", p('.cel-leader', 'stroke'), 1, card),
                 ('dial rim', p('.cel-geo-rim', 'stroke'),
                  float(p('.cel-geo-rim', 'stroke-opacity')), card),
                 # The ring opacities are set by the javascript (0.5 inside
@@ -12379,10 +13707,10 @@ class TestI18n:
         """The shared vocabulary is copied verbatim from weewx-skyfield's
         lang files (German and French native-speaker reviewed; Danish
         contributed by a native speaker; Dutch, Spanish, Italian,
-        Norwegian and Swedish Beta): body names, moon phases,
-        hemispheres, ordinates, all 88 constellation names, and every
-        [Texts] key both pages render -- the same cross-repo rule as
-        celestial.css staying in step with sky.css.
+        Norwegian and Swedish complete but unreviewed): body names,
+        moon phases, hemispheres, ordinates, all 88 constellation names,
+        and every [Texts] key both pages render -- the same cross-repo
+        rule as celestial.css staying in step with sky.css.
         Skips when no weewx-skyfield lang directory is available."""
         candidates = [
             os.path.join(os.path.dirname(REPO_ROOT), 'weewx-skyfield',
@@ -12788,7 +14116,28 @@ class TestPageFields:
         loopdata = load_loopdata()
         for entry in celestial.PAGE_FIELDS:
             if not entry.startswith('almanac'):
-                assert entry == 'current.dateTime.raw'
+                # The clock: loopdata's own current.dateTime, pinned to
+                # seconds (9.10.1).  loopdata's grammar reads the pin as
+                # a unit override, and the override converts the packet's
+                # stamp to THAT unit whatever the report's group_time --
+                # so under a report whose group_time is milliseconds the
+                # pinned entry still answers seconds, where the unpinned
+                # one answers the override.  That difference is the pin's
+                # whole reason, so it is driven here, through loopdata's
+                # own current-field path.
+                assert entry == 'current.dateTime.unix_epoch.raw'
+                cname = loopdata.LoopData.parse_cname(entry)
+                assert cname is not None, entry
+                assert (cname.period, cname.obstype, cname.unit, cname.format_spec) == (
+                    'current', 'dateTime', 'unix_epoch', 'raw')
+                pkt = {'dateTime': TIME_TS, 'usUnits': weewx.METRIC}
+                ms_report = weewx.units.Converter({'group_time': 'unix_epoch_ms'})
+                pinned = loopdata.LoopProcessor.convert_current_obs(
+                    ms_report, cname.obstype, pkt, cname.unit)
+                assert pinned[:2] == (TIME_TS, 'unix_epoch'), pinned
+                unpinned = loopdata.LoopProcessor.convert_current_obs(
+                    ms_report, cname.obstype, pkt, None)
+                assert unpinned[:2] == (TIME_TS * 1000, 'unix_epoch_ms'), unpinned
                 continue
             assert loopdata.LoopData.parse_almanac_field(entry) is not None, entry
 
@@ -12801,9 +14150,10 @@ class TestPageFields:
         skyfield 2.0 almanac, reproducing the fixture pins.  A second act
         pins STALENESS (loopdata 6.9): driven through a real evaluator's
         packet path, a next_pass group expires at the pass's own set
-        instant, not at midnight -- the page's "just set" branch is
-        visible only between a set and the next loop packet, as its
-        comment in celestial.js always claimed."""
+        instant, not at midnight.  A third pins what the 9.8 declaration
+        (skyfield 2.12's visible window) exists for: on the page's own
+        declaration, next_visible_pass rolls at the window's END, while
+        next_pass keeps a visible pass until its set."""
         loopdata = load_loopdata()
         mod, _ = load_wxskyfield()
         with saved_almanacs():
@@ -12826,20 +14176,24 @@ class TestPageFields:
         assert abs(values['almanac.iss.az'] - 309.1526) < 0.01
         assert values['almanac.iss.sunlit'] in (True, False)
         assert values['almanac.iss.label'] == 'Iss'
-        rise = values['almanac.iss.next_visible_pass.rise.unix_epoch.raw']
-        assert abs(rise - 1750587085.008) < 1.0
-        assert values['almanac.iss.next_visible_pass.set.unix_epoch.raw'] > rise
-        assert abs(values['almanac.iss.next_visible_pass.max_altitude.degree_angle.raw']
-                   - 19.3) < 0.1
-        assert abs(values['almanac.iss.next_visible_pass.duration.second.raw'] / 60.0
-                   - 10) < 1.0
-        assert values['almanac.iss.next_visible_pass.rise_azimuth.ordinal_compass'] == 'SSW'
-        assert values['almanac.iss.next_visible_pass.culmination_azimuth.ordinal_compass'] == 'SE'
-        assert values['almanac.iss.next_visible_pass.set_azimuth.ordinal_compass'] == 'ENE'
+        # The window of the Jun 22 pass, which rises at 03:11:25 PDT:
+        # visible from 03:17:14 to 03:18:49, peaking at 17.5 degrees.
+        vis = 'almanac.iss.next_visible_pass.'
+        start = values[vis + 'visible_start.unix_epoch.raw']
+        assert abs(start - 1750587434.149) < 1.0
+        assert abs(values[vis + 'visible_end.unix_epoch.raw'] - 1750587529.305) < 1.0
+        assert abs(values[vis + 'visible_peak_altitude.degree_angle.raw'] - 17.49) < 0.1
+        assert abs(values[vis + 'visible_duration.second.raw'] - 95.156) < 0.01
+        assert values[vis + 'visible_start_azimuth.ordinal_compass'] == 'ESE'
+        assert values[vis + 'visible_peak_azimuth.ordinal_compass'] == 'ESE'
+        assert values[vis + 'visible_end_azimuth.ordinal_compass'] == 'E'
+        # The next pass of any kind is the daytime one at 12:06, not
+        # visible.
+        assert values['almanac.iss.next_pass.visible'] is False
         # Tiangong: usable elements, but no visible pass in the window --
         # the pass fields are honestly None (the page's no-pass row).
         assert values['almanac.tiangong.sunlit'] in (True, False)
-        assert values['almanac.tiangong.next_visible_pass.rise.unix_epoch.raw'] is None
+        assert values['almanac.tiangong.next_visible_pass.visible_start.unix_epoch.raw'] is None
 
         # Act two, the staleness pin: the fields of one pass form a group
         # that loopdata caches and expires as a unit at the pass's set.
@@ -12900,6 +14254,55 @@ class TestPageFields:
             again = loop_packet(int(set1) + 3)
             assert again['almanac.iss.next_pass.rise.unix_epoch.raw'] == rise2
             assert again['almanac.iss.next_pass.set.unix_epoch.raw'] == set2
+
+        # Act three, the window: the page's own satellite declaration,
+        # through a real evaluator's packet path.  loopdata groups a
+        # report's fields by chain and expires a group at its latest time
+        # leaf, which is why the next_visible_pass group carries no rise
+        # or set: with one, the closed window would stand until set.
+        ctx = types.SimpleNamespace(
+            almanac_fields=loopdata.LoopData.get_almanac_fields(
+                celestial.satellite_fields('iss')),
+            almanac_texts={}, formatter=report_formatter(),
+            converter=weewx.units.Converter())
+        nv = 'almanac.iss.next_visible_pass.visible_'
+        np_ = 'almanac.iss.next_pass.'
+        with saved_almanacs():
+            assert mod.register_almanac(wxskyfield_sat_sky)
+            evaluator = loopdata.AlmanacFieldEvaluator(ctx, cfg)
+
+            def packet(ts):
+                pkt = {}
+                evaluator.insert_fields(pkt, {'dateTime': ts, 'usUnits': weewx.METRIC})
+                return pkt
+
+            noon = packet(TIME_TS)
+            start_a = noon[nv + 'start.unix_epoch.raw']
+            end_a = noon[nv + 'end.unix_epoch.raw']
+            # A pass that is not visible still carries every next_pass
+            # field: no empty leaf, so loopdata can keep the group until
+            # set rather than recompute it on every packet.
+            assert noon[np_ + 'visible'] is False
+            assert all(f in noon for f in celestial.satellite_fields('iss')
+                       if '.next_pass.' in f)
+            # Inside pass A's window: the any-pass chain is pass A, visible,
+            # and the visible chain's window lies inside its rise and set --
+            # how the dome's tag knows the window is this pass's.
+            inside = packet(int(start_a) + 30)
+            assert inside[nv + 'start.unix_epoch.raw'] == start_a
+            assert inside[np_ + 'visible'] is True
+            set_a = inside[np_ + 'set.unix_epoch.raw']
+            assert inside[np_ + 'rise.unix_epoch.raw'] <= start_a < end_a < set_a
+            # The packet whose stamp reaches the window's end already
+            # carries the NEXT window: no packet pairs a closed window with
+            # that window's fields.
+            closed = packet(int(math.ceil(end_a)))
+            assert closed[nv + 'start.unix_epoch.raw'] > set_a
+            # ... while the any-pass chain keeps pass A, visible, until set.
+            assert closed[np_ + 'set.unix_epoch.raw'] == set_a
+            assert closed[np_ + 'visible'] is True
+            after_set = packet(int(set_a) + 1)
+            assert after_set[np_ + 'set.unix_epoch.raw'] > set_a
 
     def test_comet_fields_evaluate_in_loopdata(self, wxskyfield_comet_sky):
         """Every comet entry in PAGE_FIELDS (and the mcnaught
@@ -13627,9 +15030,10 @@ class TestSatelliteUtility:
         # The reverse: every field declared, no [[Satellites]] entry.
         hand_fields = ', '.join(celestial.satellite_fields('zenit23088'))
         conf2 = tmp_path / 'weewx2.conf'
+        last = celestial.satellite_fields('tiangong')[-1]
+        assert self.BASE_CONF.endswith(last + '\n')
         conf2.write_text(self.BASE_CONF.replace(
-            'almanac.tiangong.next_pass.visible\n',
-            'almanac.tiangong.next_pass.visible, %s\n' % hand_fields))
+            last + '\n', '%s, %s\n' % (last, hand_fields)))
         out2 = tmp_path / 'weewx2.conf.new'
         report2 = celestial.add_satellite_conf(str(conf2), str(out2),
                                                'zenit23088', '23088')
@@ -13860,7 +15264,8 @@ class TestSatelliteUtility:
         assert report['norad'] == '23088'
         assert len(report['fields_removed']) == 20
         assert report['name_entry'] == 'removed'
-        assert any('wxskyfield_sat_23088.tle' in h for h in report['hints'])
+        assert any('wxskyfield_sat_23088.csv and wxskyfield_sat_23088.tle' in h
+                   for h in report['hints'])
         new = configobj.ConfigObj(str(out))
         assert 'zenit23088' not in new['Skyfield']['Satellites']
         fields = self._group(out)
@@ -14467,7 +15872,7 @@ class TestInstallerDeclaresFields:
         # Any other target report renders them a second time: counted.
         elsewhere = {'Skyfield': {'Satellites': {}, 'Comets': {}},
                      'LoopData': {'Include': {'fields': list(legacy)},
-                                  'Formatting': {'target_report': 'LiveSeasonsReport'}}}
+                                  'Formatting': {'target_report': 'OtherReport'}}}
         engine = self._engine(elsewhere)
         self._installer().configure(engine)
         assert 'still carries 47 entries' in '\n'.join(engine.printer.lines)
@@ -14479,9 +15884,11 @@ class TestInstallerDeclaresFields:
         weectl extension uninstall's remove_and_prune must take the
         whole [[CelestialReport]] away -- a leftover section holding
         only [[[LoopData]]] has no skin, and reportengine dies on it
-        every archive cycle.  The installer's config dict lists the
-        subsection (empty) for exactly this; the merge must add nothing
-        of its own for it."""
+        every archive cycle.  Since WeeWX 5.5.1 a section goes only once
+        it is empty, so the installer lists the two groups, and
+        configure() takes them out before the merge.  weectl loads the
+        installer afresh to uninstall, so the prune below does too; it is
+        run with weecfg's own and with the one before 5.5.1."""
         import configobj
         import weecfg
         from weeutil.config import conditional_merge
@@ -14492,10 +15899,21 @@ class TestInstallerDeclaresFields:
         stanza = config['StdReport']['CelestialReport']
         assert stanza['skin'] == 'Celestial'
         assert set(stanza['LoopData']['fields']) == {'satellites', 'comets'}
-        weecfg.remove_and_prune(config, installer['config'])
-        # (weecfg prunes an emptied [StdReport] as well; the point is
-        # that no [[CelestialReport]] survives.)
-        assert 'CelestialReport' not in config.get('StdReport', {})
+        def before_551(a, b):
+            for k in b:
+                if isinstance(b[k], dict):
+                    if k in a and type(a[k]) is configobj.Section:
+                        before_551(a[k], b[k])
+                        if not a[k].sections:
+                            a.pop(k)
+                elif k in a:
+                    a.pop(k)
+        for prune in (weecfg.remove_and_prune, before_551):
+            pruned = configobj.ConfigObj(config.dict())
+            prune(pruned, self._installer()['config'])
+            # (weecfg prunes an emptied [StdReport] as well; the point is
+            # that no [[CelestialReport]] survives.)
+            assert 'CelestialReport' not in pruned.get('StdReport', {}), prune
 
     def test_merge_adds_no_groups_when_the_sets_are_empty(self):
         """Empty [Skyfield] sets: configure() writes no group, and the
@@ -14684,12 +16102,13 @@ class TestInstallerLoader:
         assert 'weewx-loopdata 7.0 or later' in message
         assert 'none is installed' in message
 
-    # ---- the weewx-skyfield 2.7 floor (9.6) ----------------------------
+    # ---- the weewx-skyfield 2.12 floor (9.8) ---------------------------
     #
     # weewx-skyfield is OPTIONAL -- the page renders on PyEphem or the
-    # built-in almanac -- so ABSENCE must not refuse.  But 9.6 is pinned
-    # to 2.7, which draws the narrow frame every fragment now carries
-    # beside the wide one (2.6.1 brought the [Texts] keys the charts'
+    # built-in almanac -- so ABSENCE must not refuse.  But 9.8 is pinned
+    # to 2.12, whose visible-pass window (the visible_* fields) the page
+    # declares and reads; 2.7 drew the narrow frame every fragment
+    # carries beside the wide one (2.6.1 brought the [Texts] keys the charts'
     # dates and clock times read, 2.6 the contrast palette the panels
     # copy, 2.5 the label_layers that draw a set's narrow label scale,
     # and 2.4 the pass dot's role classes; 2.7 carries all of them).  An
@@ -14698,20 +16117,20 @@ class TestInstallerLoader:
     # charts at all -- so a skyfield that IS there and is too old
     # refuses, rather than a fallback logging on every report cycle.
 
-    @pytest.mark.parametrize('version', ['2.7', '2.7.1', '2.8', '3.0', '2.7a1', '2.7b1'])
-    def test_loads_with_skyfield_2_7(self, monkeypatch, version):
+    @pytest.mark.parametrize('version', ['2.12', '2.12.1', '2.13', '3.0', '2.12a1', '2.12b1'])
+    def test_loads_with_skyfield_2_12(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
         monkeypatch.setattr(sys, 'argv', self.INSTALL_ARGV)
         assert load_installer().loader()['name'] == 'celestial'
 
     # The floor means what WeeWX's own version_compare says, exactly as
-    # the weewx-loopdata floor above does.  Measured against '2.6.1':
-    # '2.7a1' and '2.7b1' compare as later (a dev build of 2.7 is 2.7),
-    # '2.6.9b1' and '2.5.9b1' as earlier.
-    @pytest.mark.parametrize('version', ['2.6.2', '2.6.1', '2.6', '2.6.0', '2.6.9b1',
-                                         '2.5', '2.5.1', '2.4', '2.3.5', '1.16',
-                                         '2.5.9b1'])
+    # the weewx-loopdata floor above does: '2.12a1' and '2.12b1' compare
+    # as 2.12 (a dev build of 2.12 is 2.12), '2.11.9b1' as earlier, and
+    # the components compare as numbers, so 2.7 is older than 2.12.
+    @pytest.mark.parametrize('version', ['2.11', '2.11.1', '2.11.9b1', '2.7', '2.9',
+                                         '2.6.1', '2.5', '2.4', '2.3.5', '1.16',
+                                         '2.1.12'])
     def test_refuses_an_older_skyfield(self, monkeypatch, version):
         self._with_loopdata(monkeypatch, '7.2')
         self._with_skyfield(monkeypatch, version)
@@ -14719,7 +16138,7 @@ class TestInstallerLoader:
         with pytest.raises(SystemExit) as info:
             load_installer().loader()
         message = str(info.value)
-        assert 'weewx-skyfield 2.7 or later' in message
+        assert 'weewx-skyfield 2.12 or later' in message
         assert 'found %s' % version in message
 
     def test_no_skyfield_at_all_still_installs(self, monkeypatch):
@@ -15350,7 +16769,7 @@ class TestManualInStepWithCode:
         import io
         page = _doc_text('fields-reference.md')
         shown = configobj.ConfigObj(io.StringIO(
-            _block_containing(page, 'clock = current.dateTime.raw')))
+            _block_containing(page, 'clock = current.dateTime.unix_epoch.raw')))
         declared = [f for value in shown['LoopData']['fields'].values()
                     for f in ([value] if isinstance(value, str) else value)]
         assert len(declared) == len(celestial.static_page_fields()), (
@@ -15408,7 +16827,7 @@ class TestManualInStepWithCode:
         import io
         page = _doc_text('fields-reference.md')
         shown = configobj.ConfigObj(io.StringIO(
-            _block_containing(page, 'clock = current.dateTime.raw')))
+            _block_containing(page, 'clock = current.dateTime.unix_epoch.raw')))
         shipped = configobj.ConfigObj(os.path.join(SKIN_DIR, 'skin.conf'),
                                       encoding='utf-8', file_error=True)
         assert list(shown) == ['LoopData']
@@ -15445,7 +16864,7 @@ class TestManualInStepWithCode:
             if line.startswith('|'):
                 tabled.update(re.findall(r'`([^`]+)`', line))
 
-        accounted = {'current.dateTime.raw'}
+        accounted = {'current.dateTime.unix_epoch.raw'}
         for body in _DIAL_BODIES:
             accounted.update('almanac.%s.%s' % (body, m)
                              for m in ('az', 'alt', 'earth_distance'))
@@ -15520,8 +16939,10 @@ class TestManualInStepWithCode:
         # Each row LEADS with its review status, in one of three
         # vocabularies: 'Reviewed' (a native speaker read this skin's own
         # strings), 'Partly reviewed' (only the vocabulary shared with
-        # weewx-skyfield, reviewed over there) or 'Beta'.  An untouched
-        # Beta row for a language since signed off is the drift that
+        # weewx-skyfield, reviewed over there) or 'Complete' (every
+        # string translated and pinned, nobody has read it -- the same
+        # word weewx-skyfield's table uses).  A 'Complete' row left
+        # standing after a native speaker signs off is the drift that
         # matters most here, and prose in the status cell instead of one
         # of these words is how that starts.
         #
@@ -15533,9 +16954,9 @@ class TestManualInStepWithCode:
         for row in re.findall(r'^\|[^|]+\|\s*`lang/\w+\.conf`\s*\|([^|]*)\|',
                               page, flags=re.M):
             row = row.strip()
-            assert row.startswith(('Reviewed', 'Partly reviewed', 'Beta')), \
+            assert row.startswith(('Reviewed', 'Partly reviewed', 'Complete')), \
                 'a language row does not lead with its review status: %r' % row
-            if not row.startswith('Beta'):
+            if not row.startswith('Complete'):
                 assert re.match(r'(Partly r|R)eviewed as of \d+\.\d+(\.\d+)? ', row), \
                     'a review is claimed without the release it was made '\
                     'against: %r' % row
@@ -15793,8 +17214,11 @@ class TestManualInStepWithCode:
         """The LIVE settings install.py writes, flattened to leaf
         key/value pairs.  Read through the installer object rather than
         by parsing the source, so the extractor does not care whether the
-        stanza is a dict or a ConfigObj built from CONFIG."""
-        config = load_installer().CelestialInstaller()['config']
+        stanza is a dict or a ConfigObj built from CONFIG -- as configure()
+        leaves it, without the groups listed only for the uninstall."""
+        installer = load_installer()
+        config = installer.CelestialInstaller()['config']
+        installer.unlist_celestial_groups(config)
 
         pairs = {}
         def flatten(section):

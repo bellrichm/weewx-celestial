@@ -28,10 +28,12 @@ advances each readout at the body's own derived rate, re-anchoring to truth
 on the next packet and freezing rather than inventing data if the feed goes
 stale.
 
-It reads on a phone, too.  Below about 620 pixels of chart width the sky
-dome, the Next Visible Pass chart and the Geocentric dial are drawn
-again at phone size — a different drawing, not the desktop's shrunk
-down — so every label stays legible instead of landing at five pixels.
+It reads on a phone, too.  Where a chart is drawn too narrow for its
+labels — below about 620 pixels on a phone or tablet, 570 on a desk,
+whose screen is farther away — the sky dome, the Next Visible Pass
+chart and the Geocentric dial are drawn again at phone size — a
+different drawing, not the desktop's shrunk down — so every label stays
+legible instead of landing at five pixels.
 Turning the phone switches between them instantly, with nothing fetched.
 
 ![Celestial Sample Report](CelestialSampleReport.png)
@@ -50,8 +52,10 @@ counts to zero and rolls itself to the next sunrise, with no reload:
 **The Geocentric** — Earth at the center, every body (sun, moon, Mercury
 through Neptune, Proxima Centauri) placed by compass bearing and log
 distance, the moon at its true phase, bodies below the horizon dimmed and
-dashed, an hour-long motion trail behind every dot, and a roster whose
-distance odometers tick between packets at each body's true radial rate.
+dashed, an hour-long motion trail behind every dot, each name written
+only where it reads as its own body's (on a crowded dial some are left
+off; a tap names any mark), and a roster whose distance odometers tick
+between packets at each body's true radial rate.
 Every configured comet joins the dial as a diamond whose three-ray tail
 fans anti-sunward — solid when naked-eye bright, and honestly absent when
 the Minor Planet Center has dropped its elements.
@@ -66,9 +70,10 @@ shadow, dimmed under a bright sky:
 
 ![The sky dome during an ISS near-zenith pass](CelestialDome-ISS-zenith.gif)
 
-**The Next Visible Pass** — the whole sky as it will stand at the culmination
-of the soonest upcoming *visible* pass, the pass's arc dashed across it,
-with the satellite's dot swept live along that arc during the show and
+**The Next Visible Pass** — the whole sky as it will stand at the highest
+point you can see of the soonest upcoming *visible* pass, the pass's arc
+dashed across it and the visible stretch solid, with the satellite's dot
+swept live along that arc during the show and
 flipping between sunlit and in-shadow in step with the dome's marker:
 
 ![The Next Visible Pass panel during a Tiangong pass](CelestialPassPanel-Tiangong-shadow-entry.gif)
@@ -118,7 +123,7 @@ later.**
 [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield) is
 optional but is what the page is built for: without it you get the
 Geocentric dial on PyEphem's positions and nothing else — no sky dome, no
-pass chart, no comets, no meteor showers.  **If you run it, it must be 2.7
+pass chart, no comets, no meteor showers.  **If you run it, it must be 2.12
 or later**, which this release is pinned to; the installer refuses to
 install beside an older one.  Having none at all is not a refusal.
 
@@ -126,10 +131,10 @@ install beside an older one.  Having none at all is not a refusal.
 
 1. Install [weewx-loopdata](https://github.com/chaunceygardiner/weewx-loopdata)
    7.0+ and [weewx-skyfield](https://github.com/chaunceygardiner/weewx-skyfield)
-   2.7+, per their instructions.  (The installer refuses to run beside an
+   2.12+, per their instructions.  (The installer refuses to run beside an
    older weewx-loopdata, whose per-report field declaration is the only
    way the page's live values reach it — and beside a weewx-skyfield
-   older than 2.7, which 9.6 is pinned to.)
+   older than 2.12, which 9.8 is pinned to.)
 
 1. Download `weewx-celestial.zip` from the
    [release page](https://github.com/chaunceygardiner/weewx-celestial/releases)
@@ -221,7 +226,9 @@ When a Playwright environment is available it also loads the
 served page in headless Chromium with an advancing loop-data feed and asserts
 the live machinery comes up — no page errors, dial dots drawn, rates derived,
 trails visible — and that a viewer whose clock is half an hour wrong, either
-way, sees the same page.
+way, sees the same page; and over a fixture of real skies, on a phone and a
+desk, it checks that every name the Geocentric dial draws sits nearer its
+own body than any other mark, trail or comet tail.
 
 ## Why require Python 3.9 or later?
 
